@@ -390,6 +390,10 @@ impl StudioApp {
             }
         }
         settings.fit_to_gpu();
+        // Settings saved by 1.1.1 and older say Korean without the user having chosen it.
+        if !settings.lang_chosen {
+            settings.english = true;
+        }
         if std::env::var_os("QIS_SHOT_DIR").is_some() {
             if let Ok(l) = std::env::var("QIS_LANG") {
                 settings.english = l == "en";
@@ -1945,8 +1949,10 @@ impl StudioApp {
                 ui.add_space(6.0);
                 if theme::lang_switch(ui, &mut self.settings.english) {
                     crate::i18n::set_english(self.settings.english);
+                    self.settings.lang_chosen = true;
                     if let Some(d) = self.settings_draft.as_mut() {
                         d.english = self.settings.english;
+                        d.lang_chosen = true;
                     }
                     self.on_language_changed();
                 }

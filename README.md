@@ -193,11 +193,11 @@ Engineering notes. Every figure below was measured in the app on an RTX 3060 Ti 
 
 **Graphics cards with 4–6 GB of VRAM** switch to a low-VRAM mode on their own (cards with 8 GB or more keep the default settings):
 
-| VRAM | VRAM budget | VAE decode | Measured 1024×1024* |
-|---|---|---|---|
-| 8 GB and up | 6 GB | normal | ~18 s |
-| 6 GB (GTX 1660 Ti, RTX 2060, laptop RTX 3060/4050) | 4 GB | 512² tiles | ~26 s |
-| 4 GB (laptop RTX 3050, GTX 1650) | 3 GB | 512² tiles | ~28 s |
+| VRAM | VRAM budget | VAE decode | Models (image · text encoder) | Measured 1024×1024* |
+|---|---|---|---|---|
+| 8 GB and up | 6 GB | normal | Q4_K_M · UD-Q4_K_XL | ~18 s |
+| 6 GB (GTX 1660 Ti, RTX 2060, laptop RTX 3060/4050) | 4 GB | 512² tiles | Q4_K_M · UD-Q4_K_XL | ~26 s |
+| 4 GB (laptop RTX 3050, GTX 1650) | 3 GB | 512² tiles | Q4_K_M (**Q3_K_S** under 13 GB RAM) · **Q3_K_S** | ~28 s |
 
 \*On an RTX 3060 Ti with the rest of its VRAM held by another program to leave what a 6 GB / 4 GB card has free. Slower cards take proportionally longer.
 

@@ -842,6 +842,10 @@ pub struct Settings {
     pub recent_prompts: Vec<String>,
     /// UI language: true = English (default), false = 한국어.
     pub english: bool,
+    /// The user picked the language with the 한|EN switch. Versions up to 1.1.1 saved
+    /// `english: false` (their Korean default) without a choice, so until this is set the
+    /// app starts in English.
+    pub lang_chosen: bool,
     /// GPU interface for the engine; Auto picks it from the graphics card.
     pub gpu_backend: GpuBackend,
     /// The GTX defaults ("Fast" size, Lightning 4 steps) were applied once; after that
@@ -866,6 +870,7 @@ impl Default for Settings {
             extra_args: String::new(),
             recent_prompts: Vec::new(),
             english: true,
+            lang_chosen: false,
             gpu_backend: GpuBackend::Auto,
             slow_gpu_defaults: false,
         }
