@@ -1,0 +1,5 @@
+# Link the C runtime statically on Windows so RustImageStudio.exe starts on a clean PC
+# without the Visual C++ Redistributable (the engine's own DLLs get it from the
+# first-run setup, which installs the redistributable).
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

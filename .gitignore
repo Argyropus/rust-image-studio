@@ -1,0 +1,10 @@
+/target
+/models
+/runtime
+/outputs
+/RustImageStudio.exe
+/RustImageStudio.old.exe
+/QwenImageStudio*.exe
+/dist
+*.zip
+/preview
