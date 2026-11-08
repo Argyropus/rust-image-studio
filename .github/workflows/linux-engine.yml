@@ -4,7 +4,7 @@ name: linux-engine
 # first run, and publishes it as release "engine-sd-master-1052-f5df5f8". Upstream ships no
 # Linux CUDA build, so this repository provides one. It takes a few hours (nine GPU
 # architectures), so it runs only when asked for or when that engine tag is pushed.
-# The app's download URLs point at this release: see LINUX_ENGINE_RELEASE in src/config.rs.
+# The app's download URLs point at this release: see the `linux_engine_release!` macro in src/config.rs.
 
 on:
   workflow_dispatch:

@@ -393,10 +393,15 @@ impl Settings {
             f if f == ENGINE_SOURCE.file => self.server_exe().is_file(),
             #[cfg(windows)]
             f if f == CUDART_SOURCE.file => self.runtime_dir.join("cudart64_12.dll").is_file(),
-            // A self-built sd-server on PATH brings its own CUDA runtime.
+            // Only our engine archive needs this download. A self-built sd-server, whether on
+            // PATH or copied into runtime/ as the build help says, uses the system's CUDA
+            // Toolkit; ours is recognised by the shared library it ships next to sd-server.
             #[cfg(not(windows))]
             f if f == CUDART_SOURCE.file => {
-                self.runtime_dir.join("libcublasLt.so.12").is_file() || self.server_exe() != self.runtime_dir.join(SERVER_EXE)
+                let local = self.runtime_dir.join(SERVER_EXE);
+                self.runtime_dir.join("libcublasLt.so.12").is_file()
+                    || self.server_exe() != local
+                    || (local.is_file() && !self.runtime_dir.join("libstable-diffusion.so").is_file())
             }
             f if f == CAPTION_SOURCE.file => self.runtime_dir.join("llama").join(CAPTION_EXE).is_file(),
             _ => self.dest_for(src).is_file(),
