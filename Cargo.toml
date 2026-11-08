@@ -1,6 +1,6 @@
 [package]
 name = "rust-image-studio"
-version = "1.1.1"
+version = "1.2.0"
 edition = "2024"
 description = "Local Qwen-Image-2.1 Turbo image generation app for Windows and Linux (egui + stable-diffusion.cpp)"
 license = "MIT"
