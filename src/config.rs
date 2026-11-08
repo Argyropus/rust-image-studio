@@ -454,6 +454,32 @@ impl Settings {
     }
 }
 
+/// Physical memory installed (Windows) or available to this system (Linux, incl. a WSL VM's limit).
+#[cfg(windows)]
+pub fn total_ram_bytes() -> Option<u64> {
+    use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+    let mut m: MEMORYSTATUSEX = unsafe { std::mem::zeroed() };
+    m.dwLength = std::mem::size_of::<MEMORYSTATUSEX>() as u32;
+    // SAFETY: `m` is a valid MEMORYSTATUSEX with dwLength set, as the API requires.
+    (unsafe { GlobalMemoryStatusEx(&mut m) } != 0).then_some(m.ullTotalPhys)
+}
+
+#[cfg(target_os = "linux")]
+pub fn total_ram_bytes() -> Option<u64> {
+    let mut i: libc::sysinfo = unsafe { std::mem::zeroed() };
+    // SAFETY: `i` is a valid out-pointer for sysinfo(2).
+    if unsafe { libc::sysinfo(&mut i) } != 0 {
+        return None;
+    }
+    #[allow(clippy::unnecessary_cast)] // field widths differ between libc targets
+    Some(i.totalram as u64 * i.mem_unit as u64)
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+pub fn total_ram_bytes() -> Option<u64> {
+    None
+}
+
 /// Free bytes on the drive holding `path` (the nearest existing ancestor).
 #[cfg(windows)]
 pub fn free_bytes(path: &Path) -> Option<u64> {

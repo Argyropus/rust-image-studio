@@ -300,12 +300,16 @@ impl Worker {
         //   restored by memcpy instead of re-read from disk (that cost ~6 s per image).
         // - A 6 GiB VRAM budget keeps graphs segmented instead of running out of memory.
         // - INT8 weights are 6.9 GB, so the text encoder streams from disk to fit 16 GB RAM.
+        // - Under ~13 GB of RAM (8 GB PCs, WSL's default half-of-host limit) the Q4 set
+        //   (10.2 GB in RAM) swapped: one 512² step took 76 s on a 7 GB WSL. The text encoder
+        //   then streams from disk too: a new prompt costs a few seconds more, nothing else.
         let extra = split_args(&s.extra_args);
         let user_placement =
             extra.iter().any(|a| a == "--backend" || a == "--params-backend" || a == "--offload-to-cpu");
         if !user_placement {
             cmd.args(["--backend", "diffusion=CUDA0,te=CUDA0,vae=CUDA0"]);
-            let te = if s.variant == ModelVariant::Int8 { "disk" } else { "cpu" };
+            let low_ram = crate::config::total_ram_bytes().is_some_and(|b| b < LOW_RAM_BYTES);
+            let te = if s.variant == ModelVariant::Int8 || low_ram { "disk" } else { "cpu" };
             cmd.arg("--params-backend").arg(format!("diffusion=cpu,te={te},vae=cpu"));
         }
         if !extra.iter().any(|a| a == "--max-vram") {
@@ -983,6 +987,9 @@ pub fn guided_canvas(
 }
 
 /// Generic scene text used when the user gave none (the fallback path needs a scene).
+/// Below this much RAM the text encoder is read from disk instead of kept in RAM.
+const LOW_RAM_BYTES: u64 = 13_000_000_000;
+
 pub const OUTPAINT_DEFAULT: &str = "같은 공간이 넓게 보이는 한 장의 사진, 같은 배경, 같은 조명과 색감, 선명한 디테일";
 /// What the English UI shows for it; sent to the model as the tested Korean one.
 pub const OUTPAINT_DEFAULT_EN: &str = "One photo showing the same space wider, the same background, the same lighting and colors, sharp details";
