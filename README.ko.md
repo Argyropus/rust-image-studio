@@ -22,8 +22,8 @@ Qwen-Image-2.1 Turbo · 완전 오프라인 추론 · 계정·구독·클라우�
 
 [English](README.md) · **한국어**
 
-### ⚡ Qwen-Image-2.1, 8GB VRAM에서도 매끄럽게
-RTX 3060 Ti 8GB 기준 1024×1024 한 장 **약 10~19초** · 고사양 GPU·클라우드 없이 로컬에서 안정적으로 동작
+### ⚡ Qwen-Image-2.1, 8GB VRAM에서도 매끄럽게 · 4~6GB에서도 동작
+RTX 3060 Ti 8GB 기준 1024×1024 한 장 **약 10~19초** · 4~6GB 카드는 자동 저VRAM 모드 · AMD 라데온 실험적 지원 · 고사양 GPU·클라우드 없이 로컬에서 동작
 
 [![Windows용 다운로드](https://img.shields.io/badge/%EB%8B%A4%EC%9A%B4%EB%A1%9C%EB%93%9C-Windows%20x64%20(.zip)-0078d4?style=for-the-badge&logo=windows&logoColor=white)](../../releases/latest/download/RustImageStudio-windows-x64.zip)
 [![Linux용 다운로드](https://img.shields.io/badge/%EB%8B%A4%EC%9A%B4%EB%A1%9C%EB%93%9C-Linux%20x64%20(.tar.gz)-fcc624?style=for-the-badge&logo=linux&logoColor=black)](../../releases/latest/download/RustImageStudio-linux-x64.tar.gz)
@@ -42,7 +42,7 @@ RTX 3060 Ti 8GB 기준 1024×1024 한 장 **약 10~19초** · 고사양 GPU·클
 <td width="25%" valign="top">
 
 ### ⚡ 8GB 고속 추론
-RTX 3060 Ti 8GB 기준 1024×1024 **약 10~19초**. VRAM 6GB 한도의 고정 메모리 배치에 모델 상주·예열을 더해 반복 생성 지연을 최소화하고, INT8 텐서코어 경로를 지원합니다.
+RTX 3060 Ti 8GB 기준 1024×1024 **약 10~19초**. VRAM 6GB 한도의 고정 메모리 배치에 모델 상주·예열을 더해 반복 생성 지연을 최소화하고, INT8 텐서코어 경로를 지원합니다. VRAM 4~6GB 카드는 더 작은 한도와 타일 디코딩으로 자동 전환됩니다([표](#windows)).
 
 </td>
 <td width="25%" valign="top">
@@ -172,7 +172,7 @@ Radeon 사용자분들의 결과 공유(카드, 드라이버, 엔진 종류, 장
 > **Linux 엔진 릴리스:** 앱은 본 저장소의 `engine-sd-master-1052-f5df5f8` 릴리스에서 엔진을 내려받으며, 이 릴리스는 `linux-engine`
 > 워크플로를 1회 실행해 게시합니다. 게시 전까지는 엔진 다운로드가 실패하며, 설치 화면이 대신 수동 빌드 명령을 제시합니다.
 
-**시스템 요구 사항:** x86_64 Linux, glibc 2.35 이상(Ubuntu 22.04·Debian 12 이상) · **VRAM 8GB 이상** NVIDIA GPU + 독점 드라이버(525 이상,
+**시스템 요구 사항:** x86_64 Linux, glibc 2.35 이상(Ubuntu 22.04·Debian 12 이상) · **VRAM 8GB 이상 권장** NVIDIA GPU(4~6GB는 저VRAM 모드) + 독점 드라이버(525 이상,
 미검출 시 설치 화면에서 안내) · RAM 16GB · 여유 디스크 약 17GB · X11 또는 Wayland 데스크톱 세션
 
 | 최초 실행 시 프로비저닝 항목 | 크기 | 출처 |

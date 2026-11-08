@@ -22,8 +22,8 @@ Qwen-Image-2.1 Turbo · fully offline inference · no account, subscription or c
 
 **English** · [한국어](README.ko.md)
 
-### ⚡ Qwen-Image-2.1, smooth on 8 GB of VRAM
-1024×1024 in **~10–19 s** on an RTX 3060 Ti 8 GB · runs locally and reliably, no high-end GPU or cloud
+### ⚡ Qwen-Image-2.1, smooth on 8 GB of VRAM, and runs on 4–6 GB too
+1024×1024 in **~10–19 s** on an RTX 3060 Ti 8 GB · 4–6 GB cards switch to a low-VRAM mode automatically · AMD Radeon experimental · runs locally, no high-end GPU or cloud
 
 [![Download for Windows](https://img.shields.io/badge/Download-Windows%20x64%20(.zip)-0078d4?style=for-the-badge&logo=windows&logoColor=white)](../../releases/latest/download/RustImageStudio-windows-x64.zip)
 [![Download for Linux](https://img.shields.io/badge/Download-Linux%20x64%20(.tar.gz)-fcc624?style=for-the-badge&logo=linux&logoColor=black)](../../releases/latest/download/RustImageStudio-linux-x64.tar.gz)
@@ -45,7 +45,7 @@ Engine and models are provisioned on first launch · full UI reference: **[menu 
 <td width="25%" valign="top">
 
 ### ⚡ Fast on 8 GB
-1024×1024 in **~10–19 s** on an RTX 3060 Ti 8 GB. A fixed 6 GB VRAM budget plus a resident, pre-warmed model keeps latency low, and an optional INT8 path uses the tensor cores.
+1024×1024 in **~10–19 s** on an RTX 3060 Ti 8 GB. A fixed 6 GB VRAM budget plus a resident, pre-warmed model keeps latency low, and an optional INT8 path uses the tensor cores. Cards with 4–6 GB get a smaller budget and tiled VAE decoding on their own ([table](#windows)).
 
 </td>
 <td width="25%" valign="top">
@@ -273,7 +273,7 @@ GPU architectures from Pascal to Blackwell) and publishes it, together with the 
 > which is published by running the `linux-engine` workflow once. Until it exists, the engine download fails and the setup
 > screen offers the build-it-yourself commands instead.
 
-**System requirements:** x86_64 Linux with glibc 2.35+ (Ubuntu 22.04, Debian 12 or newer) · NVIDIA GPU with 8 GB+ VRAM and the proprietary
+**System requirements:** x86_64 Linux with glibc 2.35+ (Ubuntu 22.04, Debian 12 or newer) · NVIDIA GPU with 8 GB+ VRAM recommended (4–6 GB use the low-VRAM mode) and the proprietary
 driver (525 or newer; the app warns if it finds none) · 16 GB RAM · about 17 GB free disk · an X11 or Wayland desktop.
 
 | Downloaded on first launch | Size | From |
