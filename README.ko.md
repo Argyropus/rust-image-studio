@@ -4,14 +4,15 @@
 
 # Rust Image Studio
 
-**온디바이스 생성형 AI 이미지 스튜디오 · Rust 네이티브 앱**<br>
+**Qwen-Image-2.1을 내 PC에서 실행하는 Rust 네이티브 AI 이미지 스튜디오**<br>
 텍스트 투 이미지 · 이미지 변형 · 지시문 편집 · 인페인팅 · *원본 보존형 아웃페인팅*<br>
-Qwen-Image-2.1 Turbo 기반 · 완전 오프라인 추론 · 계정·구독·클라우드 의존성 없음
+Qwen-Image-2.1 Turbo · 완전 오프라인 추론 · 계정·구독·클라우드 의존성 없음
 
 ![Written in Rust](https://img.shields.io/badge/Written%20in-Rust-b7410e?logo=rust&logoColor=white)
 ![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078d4?logo=windows&logoColor=white)
 ![Linux](https://img.shields.io/badge/Linux-x86__64%20%C2%B7%20experimental-fcc624?logo=linux&logoColor=black)
 ![NVIDIA CUDA](https://img.shields.io/badge/NVIDIA-CUDA%2012%20%C2%B7%208%20GB-76b900?logo=nvidia&logoColor=white)
+![Model: Qwen-Image-2.1 Turbo](https://img.shields.io/badge/Model-Qwen--Image--2.1%20Turbo-615ced)
 
 ![Built with Claude AI](https://img.shields.io/badge/Built%20with-Claude%20AI-d97757?logo=claude&logoColor=white)
 ![License](https://img.shields.io/badge/license-MIT-blue)
@@ -20,7 +21,7 @@ Qwen-Image-2.1 Turbo 기반 · 완전 오프라인 추론 · 계정·구독·클
 
 [English](README.md) · **한국어**
 
-### ⚡ 8GB VRAM에서도 매끄러운 고해상도 생성
+### ⚡ Qwen-Image-2.1, 8GB VRAM에서도 매끄럽게
 RTX 3060 Ti 8GB 기준 1024×1024 한 장 **약 10~19초** · 고사양 GPU·클라우드 없이 로컬에서 안정적으로 동작
 
 [![Windows용 다운로드](https://img.shields.io/badge/%EB%8B%A4%EC%9A%B4%EB%A1%9C%EB%93%9C-Windows%20x64%20(.zip)-0078d4?style=for-the-badge&logo=windows&logoColor=white)](../../releases/latest/download/RustImageStudio-windows-x64.zip)

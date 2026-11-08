@@ -4,14 +4,15 @@
 
 # Rust Image Studio
 
-**An on-device generative AI image studio · built natively in Rust**<br>
+**Run Qwen-Image-2.1 locally · an on-device AI image studio built natively in Rust**<br>
 Text-to-image · img2img variation · instruction editing · inpainting · *fidelity-preserving outpainting*<br>
-Powered by Qwen-Image-2.1 Turbo · fully offline inference · no account, subscription or cloud
+Qwen-Image-2.1 Turbo · fully offline inference · no account, subscription or cloud
 
 ![Written in Rust](https://img.shields.io/badge/Written%20in-Rust-b7410e?logo=rust&logoColor=white)
 ![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078d4?logo=windows&logoColor=white)
 ![Linux](https://img.shields.io/badge/Linux-x86__64%20%C2%B7%20experimental-fcc624?logo=linux&logoColor=black)
 ![NVIDIA CUDA](https://img.shields.io/badge/NVIDIA-CUDA%2012%20%C2%B7%208%20GB-76b900?logo=nvidia&logoColor=white)
+![Model: Qwen-Image-2.1 Turbo](https://img.shields.io/badge/Model-Qwen--Image--2.1%20Turbo-615ced)
 
 ![Built with Claude AI](https://img.shields.io/badge/Built%20with-Claude%20AI-d97757?logo=claude&logoColor=white)
 ![License](https://img.shields.io/badge/license-MIT-blue)
@@ -20,7 +21,7 @@ Powered by Qwen-Image-2.1 Turbo · fully offline inference · no account, subscr
 
 **English** · [한국어](README.ko.md)
 
-### ⚡ Smooth, high-resolution generation on 8 GB of VRAM
+### ⚡ Qwen-Image-2.1, smooth on 8 GB of VRAM
 1024×1024 in **~10–19 s** on an RTX 3060 Ti 8 GB · runs locally and reliably, no high-end GPU or cloud
 
 [![Download for Windows](https://img.shields.io/badge/Download-Windows%20x64%20(.zip)-0078d4?style=for-the-badge&logo=windows&logoColor=white)](../../releases/latest/download/RustImageStudio-windows-x64.zip)
