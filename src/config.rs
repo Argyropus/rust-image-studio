@@ -365,6 +365,28 @@ pub fn has_tensor_cores(name: &str) -> bool {
     !name.to_ascii_lowercase().contains("gtx")
 }
 
+/// A GeForce GTX card (16 series and older, e.g. GTX 1650): no tensor cores, so sampling
+/// is compute-bound, roughly 10–15× slower than an RTX 3060 Ti (a 1024² Turbo image took
+/// over 500 s on a GTX 1650). These cards start on the "Fast" size with Lightning 4 steps.
+/// Self-tests can pretend another card name (`QIS_FAKE_GPU_NAME`, with `QIS_SHOT_DIR`).
+pub fn slow_gpu() -> bool {
+    static SLOW: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *SLOW.get_or_init(|| {
+        if std::env::var_os("QIS_SHOT_DIR").is_some() {
+            if let Ok(name) = std::env::var("QIS_FAKE_GPU_NAME") {
+                return !has_tensor_cores(&name);
+            }
+        }
+        let g = detect_gpu();
+        g.vendor == GpuVendor::Nvidia && !has_tensor_cores(&g.name)
+    })
+}
+
+/// Over ~0.6 MP (above the "Fast" size) a GTX card takes minutes per image.
+pub fn slow_for_gpu(w: u32, h: u32) -> bool {
+    slow_gpu() && (w as u64 * h as u64) > 600_000
+}
+
 /// VRAM of the GPU the engine uses. Self-tests can pretend a smaller card
 /// (`QIS_FAKE_VRAM_GB`, only together with `QIS_SHOT_DIR`).
 pub fn gpu_vram_bytes() -> Option<u64> {
@@ -380,6 +402,27 @@ pub fn gpu_vram_bytes() -> Option<u64> {
 /// the image in tiles. Larger cards keep the settings measured on 8 GB cards.
 pub fn low_vram(vram_bytes: Option<u64>) -> bool {
     vram_bytes.is_some_and(|b| b < 5 << 30)
+}
+
+/// Under this much installed RAM (8 GB PCs, WSL's default limit) the weights don't all fit
+/// in memory: the text encoder is read from disk, and 4 GB cards use the Q3_K_S image model.
+pub const LOW_RAM_BYTES: u64 = 13_000_000_000;
+
+/// Installed RAM. Self-tests can pretend a smaller PC (`QIS_FAKE_RAM_GB`, with `QIS_SHOT_DIR`).
+pub fn system_ram_bytes() -> Option<u64> {
+    if std::env::var_os("QIS_SHOT_DIR").is_some() {
+        if let Some(gb) = std::env::var("QIS_FAKE_RAM_GB").ok().and_then(|v| v.parse::<u64>().ok()) {
+            return Some(gb << 30);
+        }
+    }
+    total_ram_bytes()
+}
+
+/// Q3_K_S instead of Q4_K_M only on a 4 GB card in a PC short of RAM: Q3_K_S measured 24%
+/// slower per step (1.34 vs 1.08 s on an RTX 3060 Ti held to 4 GB) but needs 1.5 GB less
+/// RAM, which keeps an 8 GB PC from paging the engine out.
+pub fn wants_small_diffusion(vram: Option<u64>, ram: Option<u64>) -> bool {
+    low_vram(vram) && ram.is_some_and(|r| r < LOW_RAM_BYTES)
 }
 
 /// VRAM budget (GiB) for `--max-vram` on the ROCm/Vulkan builds: the 6 GiB tested on
@@ -745,6 +788,33 @@ pub const MODEL_SOURCES: [ModelSource; 3] = [
     },
 ];
 
+pub const DIFFUSION_SMALL_FILE: &str = "qwen-image-2.1-turbo-Q3_K_S.gguf";
+
+/// Image model for 4 GB cards in PCs short of RAM: Q3_K_S, 2.72 GB instead of 4.2 GB, so
+/// 1.5 GB less RAM is needed.
+pub const DIFFUSION_SMALL_SOURCE: ModelSource = ModelSource {
+    label: "이미지 생성 모델 (Qwen-Image-2.1-Turbo Q3_K_S, 저사양 PC용)",
+    label_en: "Image model (Qwen-Image-2.1-Turbo Q3_K_S, for low-end PCs)",
+    file: DIFFUSION_SMALL_FILE,
+    url: "https://huggingface.co/unsloth/Qwen-Image-2.1-Turbo-GGUF/resolve/main/qwen-image-2.1-turbo-Q3_K_S.gguf",
+    approx_bytes: 2_724_742_976,
+    unzip: false,
+};
+
+pub const TEXT_ENCODER_SMALL_FILE: &str = "Qwen3-VL-8B-Instruct-Q3_K_S.gguf";
+
+/// Text encoder for 4 GB cards: Q3_K_S, 3.77 GB instead of 5.15 GB. Those PCs usually read
+/// the text encoder from disk for every new prompt (too little RAM to keep it), so 27%
+/// less to read.
+pub const TEXT_ENCODER_SMALL_SOURCE: ModelSource = ModelSource {
+    label: "텍스트 인코더 (Qwen3-VL-8B Q3_K_S, 4GB 그래픽카드용)",
+    label_en: "Text encoder (Qwen3-VL-8B Q3_K_S, for 4 GB cards)",
+    file: TEXT_ENCODER_SMALL_FILE,
+    url: "https://huggingface.co/unsloth/Qwen3-VL-8B-Instruct-GGUF/resolve/main/Qwen3-VL-8B-Instruct-Q3_K_S.gguf",
+    approx_bytes: 3_769_613_152,
+    unzip: false,
+};
+
 /// Which diffusion weights to run.
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ModelVariant {
@@ -770,10 +840,13 @@ pub struct Settings {
     pub warmup: bool,
     pub extra_args: String,
     pub recent_prompts: Vec<String>,
-    /// UI language: false = 한국어 (default), true = English.
+    /// UI language: true = English (default), false = 한국어.
     pub english: bool,
     /// GPU interface for the engine; Auto picks it from the graphics card.
     pub gpu_backend: GpuBackend,
+    /// The GTX defaults ("Fast" size, Lightning 4 steps) were applied once; after that
+    /// the user's own choices stay.
+    pub slow_gpu_defaults: bool,
 }
 
 impl Default for Settings {
@@ -792,8 +865,9 @@ impl Default for Settings {
             warmup: true,
             extra_args: String::new(),
             recent_prompts: Vec::new(),
-            english: false,
+            english: true,
             gpu_backend: GpuBackend::Auto,
+            slow_gpu_defaults: false,
         }
     }
 }
@@ -849,6 +923,8 @@ impl Settings {
         match file {
             DIFFUSION_FILE => self.diffusion_model.clone(),
             TEXT_ENCODER_FILE => self.text_encoder.clone(),
+            TEXT_ENCODER_SMALL_FILE => self.models_dir().join(TEXT_ENCODER_SMALL_FILE),
+            DIFFUSION_SMALL_FILE => self.models_dir().join(DIFFUSION_SMALL_FILE),
             VISION_FILE => self.vision.clone(),
             INT8_FILE => self.int8_model.clone(),
             _ => self.vae.clone(),
@@ -856,27 +932,54 @@ impl Settings {
     }
 
     /// Diffusion weights for the selected variant.
-    pub fn active_diffusion(&self) -> &Path {
+    pub fn active_diffusion(&self) -> PathBuf {
         match self.variant {
-            ModelVariant::Q4 => &self.diffusion_model,
-            ModelVariant::Int8 => &self.int8_model,
+            ModelVariant::Q4 if self.small_diffusion() => self.model_path_for(DIFFUSION_SMALL_FILE),
+            ModelVariant::Q4 => self.diffusion_model.clone(),
+            ModelVariant::Int8 => self.int8_model.clone(),
         }
+    }
+
+    /// 4 GB cards in PCs short of RAM run the Q3_K_S image model instead of Q4_K_M
+    /// (`wants_small_diffusion`), unless the user picked their own file.
+    pub fn small_diffusion(&self) -> bool {
+        wants_small_diffusion(gpu_vram_bytes(), system_ram_bytes())
+            && self.diffusion_model.file_name().is_some_and(|n| n == DIFFUSION_FILE)
+    }
+
+    /// 4 GB cards run the smaller text encoder, unless the user picked their own file.
+    pub fn small_text_encoder(&self) -> bool {
+        low_vram(gpu_vram_bytes()) && self.text_encoder.file_name().is_some_and(|n| n == TEXT_ENCODER_FILE)
+    }
+
+    /// The text encoder the engine loads.
+    pub fn active_text_encoder(&self) -> PathBuf {
+        if self.small_text_encoder() {
+            self.model_path_for(TEXT_ENCODER_SMALL_FILE)
+        } else {
+            self.text_encoder.clone()
+        }
+    }
+
+    /// The three model files the engine needs: diffusion (selected variant), text encoder, VAE.
+    fn required_models(&self) -> [&'static ModelSource; 3] {
+        let diffusion: &'static ModelSource = match self.variant {
+            ModelVariant::Q4 if self.small_diffusion() => &DIFFUSION_SMALL_SOURCE,
+            ModelVariant::Q4 => &MODEL_SOURCES[0],
+            ModelVariant::Int8 => &INT8_SOURCE,
+        };
+        let te = if self.small_text_encoder() { &TEXT_ENCODER_SMALL_SOURCE } else { &MODEL_SOURCES[1] };
+        [diffusion, te, &MODEL_SOURCES[2]]
     }
 
     /// Required files for the selected variant that are not on disk yet.
     pub fn missing_models(&self) -> Vec<&'static ModelSource> {
-        let diffusion: &'static ModelSource = match self.variant {
-            ModelVariant::Q4 => &MODEL_SOURCES[0],
-            ModelVariant::Int8 => &INT8_SOURCE,
-        };
-        std::iter::once(diffusion)
-            .chain(MODEL_SOURCES[1..].iter())
-            .filter(|m| !self.model_path_for(m.file).is_file())
-            .collect()
+        self.required_models().into_iter().filter(|m| !self.model_path_for(m.file).is_file()).collect()
     }
 
     pub fn variant_label(&self) -> &'static str {
         match self.variant {
+            ModelVariant::Q4 if self.small_diffusion() => "Q3_K_S",
             ModelVariant::Q4 => "Q4_K_M",
             ModelVariant::Int8 => t!("INT8 텐서코어", "INT8 tensor cores"),
         }
@@ -933,10 +1036,6 @@ impl Settings {
     /// On Linux the CUDA engine and runtime come from this repository's own release (see
     /// `linux_engine_release!`); Windows also installs the Visual C++ runtime first.
     pub fn setup_items(&self) -> Vec<(&'static ModelSource, bool)> {
-        let diffusion: &'static ModelSource = match self.variant {
-            ModelVariant::Q4 => &MODEL_SOURCES[0],
-            ModelVariant::Int8 => &INT8_SOURCE,
-        };
         let mut v: Vec<(&'static ModelSource, bool)> = Vec::new();
         #[cfg(windows)]
         v.push((&VCREDIST_SOURCE, true));
@@ -945,8 +1044,7 @@ impl Settings {
         if backend == GpuBackend::Cuda {
             v.push((&CUDART_SOURCE, true));
         }
-        v.push((diffusion, true));
-        v.extend(MODEL_SOURCES[1..].iter().map(|m| (m, true)));
+        v.extend(self.required_models().into_iter().map(|m| (m, true)));
         v.push((&VISION_SOURCE, false));
         v.extend(crate::lora::RECOMMENDED.iter().map(|(s, _)| (*s, false)));
         v.push((&CAPTION_SOURCE, false));
@@ -1007,6 +1105,29 @@ pub fn total_ram_bytes() -> Option<u64> {
 
 #[cfg(not(any(windows, target_os = "linux")))]
 pub fn total_ram_bytes() -> Option<u64> {
+    None
+}
+
+/// Physical memory free for a new process right now (Windows `ullAvailPhys`, Linux
+/// `MemAvailable`): RAM the browser and other apps aren't using.
+#[cfg(windows)]
+pub fn available_ram_bytes() -> Option<u64> {
+    use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+    let mut m: MEMORYSTATUSEX = unsafe { std::mem::zeroed() };
+    m.dwLength = std::mem::size_of::<MEMORYSTATUSEX>() as u32;
+    // SAFETY: `m` is a valid MEMORYSTATUSEX with dwLength set, as the API requires.
+    (unsafe { GlobalMemoryStatusEx(&mut m) } != 0).then_some(m.ullAvailPhys)
+}
+
+#[cfg(target_os = "linux")]
+pub fn available_ram_bytes() -> Option<u64> {
+    let info = std::fs::read_to_string("/proc/meminfo").ok()?;
+    let kb: u64 = info.lines().find_map(|l| l.strip_prefix("MemAvailable:"))?.trim().trim_end_matches("kB").trim().parse().ok()?;
+    Some(kb * 1024)
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+pub fn available_ram_bytes() -> Option<u64> {
     None
 }
 
@@ -1436,6 +1557,29 @@ mod aspect_tests {
         assert_eq!(super::normalize_aspect(3), 3);
         assert_eq!(super::normalize_aspect(99), super::ASPECTS.len() - 1);
     }
+
+    #[test]
+    fn slow_gpu_defaults_pick_fast_size_and_lightning() {
+        let mut p = super::GenParams::default();
+        p.size = 2;
+        p.loras.push(crate::lora::LoraSel { file: crate::lora::LIGHTNING_FILE.into(), weight: 0.5, enabled: false });
+        p.apply_slow_gpu_defaults();
+        assert_eq!(p.dimensions(), (736, 736));
+        assert_eq!(p.loras.len(), 1);
+        assert!(p.loras[0].enabled && (p.loras[0].weight - 1.0).abs() < 1e-6);
+        assert!(super::has_tensor_cores("NVIDIA GeForce RTX 3050"));
+        assert!(!super::has_tensor_cores("NVIDIA GeForce GTX 1650"));
+    }
+
+    #[test]
+    fn q3_image_model_only_on_4gb_card_short_of_ram() {
+        use super::wants_small_diffusion as small;
+        let gb = |n: u64| Some(n << 30);
+        assert!(small(gb(4), gb(8)));
+        assert!(!small(gb(4), gb(16)), "enough RAM: Q4 is faster");
+        assert!(!small(gb(8), gb(8)), "8 GB card keeps Q4");
+        assert!(!small(gb(4), None), "unknown RAM keeps Q4");
+    }
 }
 
 /// (label, megapixels)
@@ -1448,6 +1592,26 @@ pub fn size_labels() -> Vec<&'static str> {
 }
 
 impl GenParams {
+    /// Defaults for a GTX card: the "Fast" size (736×736 square) and Lightning 4 steps,
+    /// about 4× less work than 1024² in 8 steps.
+    pub fn apply_slow_gpu_defaults(&mut self) {
+        self.size = 0;
+        self.custom_size = false;
+        let file = crate::lora::LIGHTNING_FILE;
+        for l in &mut self.loras {
+            if crate::lora::conflicts(&l.file, file) {
+                l.enabled = false;
+            }
+        }
+        match self.loras.iter_mut().find(|l| l.file == file) {
+            Some(l) => {
+                l.enabled = true;
+                l.weight = 1.0;
+            }
+            None => self.loras.push(crate::lora::LoraSel { file: file.to_owned(), weight: 1.0, enabled: true }),
+        }
+    }
+
     /// Final output dimensions, snapped to multiples of 32 as Qwen-Image requires.
     pub fn dimensions(&self) -> (u32, u32) {
         self.dimensions_for(None)

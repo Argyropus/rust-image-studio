@@ -199,7 +199,12 @@ Engineering notes. Every figure below was measured in the app on an RTX 3060 Ti 
 | 6 GB (GTX 1660 Ti, RTX 2060, laptop RTX 3060/4050) | 4 GB | 512² tiles | ~26 s |
 | 4 GB (laptop RTX 3050, GTX 1650) | 3 GB | 512² tiles | ~28 s |
 
-\*On an RTX 3060 Ti with the rest of its VRAM held by another program to leave what a 6 GB / 4 GB card has free. Slower cards take proportionally longer (a GTX 1650-class card perhaps 50–90 s). GeForce GTX cards have no tensor cores, so the INT8 model is hidden there and the standard Q4 model is used.
+\*On an RTX 3060 Ti with the rest of its VRAM held by another program to leave what a 6 GB / 4 GB card has free. Slower cards take proportionally longer.
+
+- **GeForce GTX cards** (GTX 16 series and older) have no tensor cores and are compute-bound: a 1024×1024 image took over 500 s on a GTX 1650. They start on the "Fast" size (736×736) with the Lightning 4-step LoRA, about 4× less work, and the INT8 model is hidden there.
+- **4 GB cards** download a smaller text encoder (Qwen3-VL-8B Q3_K_S, 3.77 GB instead of 5.15 GB). In a PC with under 13 GB of RAM they also get the Q3_K_S image model (2.72 GB instead of 4.2 GB): it is 24% slower per step but needs 1.5 GB less RAM, so the engine isn't paged out.
+- Expand, variation and inpaint always run the normal 8 steps: Lightning 4 steps left borders blank or drew the subject twice when expanding.
+- **Low free RAM:** when too little RAM is free at engine start to keep all weights in memory, the text encoder is read from disk instead (a few seconds more per new prompt) rather than letting Windows page the engine out.
 
 1. Download [`RustImageStudio-windows-x64.zip`](../../releases/latest/download/RustImageStudio-windows-x64.zip) (prebuilt binary, about 10 MB; all versions are on [Releases](../../releases)) and extract it into an empty folder.
 2. Run `RustImageStudio.exe`. No Rust toolchain, Visual Studio or source build is required; those apply only when [building from source](#build-from-source).

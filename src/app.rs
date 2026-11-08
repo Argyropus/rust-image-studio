@@ -364,7 +364,7 @@ impl StudioApp {
             settings.text_encoder = d.text_encoder;
             settings.vae = d.vae;
         }
-        let params: GenParams = cc
+        let mut params: GenParams = cc
             .storage
             .filter(|_| !fresh)
             .and_then(|s| eframe::get_value(s, "params"))
@@ -396,6 +396,13 @@ impl StudioApp {
             }
         }
         crate::i18n::set_english(settings.english);
+        // GTX cards (no tensor cores) took minutes per 1024² image: start them once on the
+        // "Fast" size with Lightning 4 steps, also when they already ran an older version.
+        let slow_defaults = crate::config::slow_gpu() && !settings.slow_gpu_defaults;
+        if slow_defaults {
+            params.apply_slow_gpu_defaults();
+            settings.slow_gpu_defaults = true;
+        }
         let engine = Engine::spawn(cc.egui_ctx.clone());
         let history = History::load(&settings.output_dir);
         let (img_tx, img_rx) = channel();
@@ -472,6 +479,15 @@ impl StudioApp {
             dl_rx,
         };
         app.lora_files = crate::lora::scan(&app.settings.lora_dir());
+        if slow_defaults {
+            app.toast(
+                t!(
+                    "GTX 그래픽카드: 빠른 생성을 위해 '빠름' 크기와 Lightning 4단계를 기본으로 켰습니다",
+                    "GTX graphics card: the \"Fast\" size and Lightning 4 steps are on by default for quicker images"
+                ),
+                ACCENT_HOVER,
+            );
+        }
         // Self-test only: open straight into the expand preview with this image.
         if let (Some(_), Ok(path)) = (std::env::var_os("QIS_SHOT_DIR"), std::env::var("QIS_PREVIEW_INPUT")) {
             if let Ok(img) = image::open(&path) {
@@ -1004,7 +1020,7 @@ impl StudioApp {
         if !self.settings.vision_ok() {
             return None;
         }
-        crate::caption::Captioner::find(&self.settings.runtime_dir, &self.settings.text_encoder, &self.settings.vision)
+        crate::caption::Captioner::find(&self.settings.runtime_dir, &self.settings.active_text_encoder(), &self.settings.vision)
     }
 
     /// Cached `captioner().is_some()` for the UI (file checks at most every 3 s).
@@ -2566,6 +2582,11 @@ impl StudioApp {
         };
         let edit = self.params.mode == GenMode::Edit;
         match crate::lora::kind(file) {
+            Kind::Lightning if matches!(self.params.mode, GenMode::Outpaint | GenMode::Variation | GenMode::Inpaint) => hint(
+                ui,
+                t!("확장·변형·부분 수정에서는 적용되지 않습니다 (일반 8단계로 생성 · 4단계는 테두리가 비거나 대상이 두 번 그려짐)", "Not used for expand, variation or inpaint (normal 8 steps · 4 steps left borders blank or drew the subject twice)"),
+                AMBER,
+            ),
             Kind::Lightning => hint(ui, t!("⚡ 4단계로 생성 · 장당 약 12초 (8단계 약 18초) · 2단계보다 디테일이 나음", "⚡ Generates in 4 steps · about 12 s per image (8 steps: about 18 s) · more detail than 2 steps"), ACCENT_HOVER),
             Kind::Consistency if edit => hint(
                 ui,
@@ -2830,6 +2851,7 @@ impl StudioApp {
                 ui.add_space(4.0);
                 let labels = crate::config::size_labels();
                 segmented(ui, &mut self.params.size, &labels);
+                slow_gpu_hint(ui, w, h);
             });
             return;
         }
@@ -2883,6 +2905,7 @@ impl StudioApp {
                 self.params.height = snap32(self.params.height);
                 ui.label(RichText::new(t!("32의 배수로 자동 맞춤 · 큰 해상도는 시간이 오래 걸립니다", "Snapped to multiples of 32 · large sizes take longer")).size(12.0).color(TEXT_FAINT));
             }
+            slow_gpu_hint(ui, w, h);
         });
     }
 
@@ -3038,7 +3061,11 @@ impl StudioApp {
                 ui.menu_button(RichText::new(tf!("모델: {} {}", "Model: {} {}", self.settings.variant_label(), if cfg!(windows) { "▾" } else { "⏷" })).size(12.0), |ui| {
                     ui.set_min_width(300.0);
                     for (v, title, desc) in [
-                        (ModelVariant::Q4, t!("표준 · Q4_K_M", "Standard · Q4_K_M"), t!("RAM을 적게 씀 · 장당 약 19초", "Less RAM · about 19 s per image")),
+                        (
+                            ModelVariant::Q4,
+                            if self.settings.small_diffusion() { t!("표준 · Q3_K_S (저사양 PC용)", "Standard · Q3_K_S (for low-end PCs)") } else { t!("표준 · Q4_K_M", "Standard · Q4_K_M") },
+                            t!("RAM을 적게 씀 · 장당 약 19초", "Less RAM · about 19 s per image"),
+                        ),
                         (ModelVariant::Int8, t!("고화질·고속 · INT8 텐서코어", "High quality · fast · INT8 tensor core"), t!("반복 생성 장당 약 12.5초 · 원본에 더 가까운 화질", "Repeat generations about 12.5 s each · closer to the original quality")),
                     ] {
                         let mark = if v == current { "✔ " } else { "    " };
@@ -3921,7 +3948,11 @@ impl StudioApp {
                 ui.horizontal(|ui| {
                     let w = (ui.available_width() - 8.0) / 2.0;
                     for (variant, title, desc) in [
-                        (ModelVariant::Q4, t!("표준 · Q4_K_M (4.2GB)", "Standard · Q4_K_M (4.2 GB)"), t!("RAM을 적게 씁니다.\n장당 약 18초", "Uses less RAM.\nAbout 18 s per image")),
+                        (
+                            ModelVariant::Q4,
+                            if draft.small_diffusion() { t!("표준 · Q3_K_S (2.7GB, 저사양 PC용)", "Standard · Q3_K_S (2.7 GB, for low-end PCs)") } else { t!("표준 · Q4_K_M (4.2GB)", "Standard · Q4_K_M (4.2 GB)") },
+                            t!("RAM을 적게 씁니다.\n장당 약 18초", "Uses less RAM.\nAbout 18 s per image"),
+                        ),
                         (
                             ModelVariant::Int8,
                             t!("고화질·고속 · INT8 텐서코어 (7.3GB)", "High quality · fast · INT8 tensor core (7.3 GB)"),
@@ -4301,7 +4332,14 @@ impl eframe::App for StudioApp {
                 self.params.count = std::env::var("QIS_AUTOCOUNT").ok().and_then(|v| v.parse().ok()).unwrap_or(1);
                 self.params.fast_mode = std::env::var("QIS_FAST").is_ok();
                 self.params.mode = GenMode::Text;
-                self.params.random_seed = true;
+                // QIS_SEED pins the seed, to compare runs (e.g. two text encoders) image for image.
+                match std::env::var("QIS_SEED").ok().and_then(|v| v.parse::<u64>().ok()) {
+                    Some(seed) => {
+                        self.params.random_seed = false;
+                        self.params.seed = seed;
+                    }
+                    None => self.params.random_seed = true,
+                }
                 if let Ok(path) = std::env::var("QIS_AUTOINPUT") {
                     self.params.mode = match std::env::var("QIS_AUTOMODE").as_deref() {
                         Ok("variation") => GenMode::Variation,
@@ -4381,6 +4419,20 @@ impl eframe::App for StudioApp {
 }
 
 // ---------------------------------------------------------------------- free helpers
+
+/// Under the size picker on a GTX card when the size is above "Fast".
+fn slow_gpu_hint(ui: &mut Ui, w: u32, h: u32) {
+    if crate::config::slow_for_gpu(w, h) {
+        ui.label(
+            RichText::new(t!(
+                "⚠ GTX 그래픽카드는 느립니다: 이 크기는 장당 몇 분 걸릴 수 있어요 · '빠름' 권장",
+                "⚠ GTX graphics cards are slow: this size can take minutes per image · \"Fast\" recommended"
+            ))
+            .size(12.0)
+            .color(AMBER),
+        );
+    }
+}
 
 fn side_cursor(side: u8) -> CursorIcon {
     use crate::config::{SIDE_B as B, SIDE_L as L, SIDE_R as R, SIDE_T as T};

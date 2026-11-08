@@ -260,8 +260,8 @@ impl Worker {
             bail!("{}", tf!("{}를 찾을 수 없습니다: {}", "{} not found: {}", crate::config::SERVER_EXE, exe.display()));
         }
         for (name, p) in [
-            (t!("이미지 생성 모델", "Image model"), &s.active_diffusion().to_path_buf()),
-            (t!("텍스트 인코더", "Text encoder"), &s.text_encoder),
+            (t!("이미지 생성 모델", "Image model"), &s.active_diffusion()),
+            (t!("텍스트 인코더", "Text encoder"), &s.active_text_encoder()),
             ("VAE", &s.vae),
         ] {
             if !p.is_file() {
@@ -283,7 +283,7 @@ impl Worker {
             .arg("--diffusion-model")
             .arg(s.active_diffusion())
             .arg("--llm")
-            .arg(&s.text_encoder)
+            .arg(s.active_text_encoder())
             .arg("--vae")
             .arg(&s.vae)
             .args(["--sigmas", "qwen-image-2.1-turbo", "--steps", "8"])
@@ -303,6 +303,7 @@ impl Worker {
         // - Under ~13 GB of RAM (8 GB PCs, WSL's default half-of-host limit) the Q4 set
         //   (10.2 GB in RAM) swapped: one 512² step took 76 s on a 7 GB WSL. The text encoder
         //   then streams from disk too: a new prompt costs a few seconds more, nothing else.
+        //   The same happens when too little RAM is free right now (`weights_fit_in_ram`).
         let extra = split_args(&s.extra_args);
         let user_placement =
             extra.iter().any(|a| a == "--backend" || a == "--params-backend" || a == "--offload-to-cpu");
@@ -329,8 +330,21 @@ impl Worker {
                 })?
             };
             cmd.arg("--backend").arg(format!("diffusion={device},te={device},vae={device}"));
-            let low_ram = crate::config::total_ram_bytes().is_some_and(|b| b < LOW_RAM_BYTES);
-            let te = if s.variant == ModelVariant::Int8 || low_ram { "disk" } else { "cpu" };
+            let size = |p: &std::path::Path| std::fs::metadata(p).map(|m| m.len()).unwrap_or(0);
+            let mut weights = size(&s.active_diffusion()) + size(&s.active_text_encoder()) + size(&s.vae);
+            if s.vision_ok() {
+                weights += size(&s.vision);
+            }
+            let (total, available) = (crate::config::system_ram_bytes(), crate::config::available_ram_bytes());
+            let in_ram = weights_fit_in_ram(total, available, weights);
+            if !in_ram && s.variant != ModelVariant::Int8 {
+                self.emit(EngineEvent::Log(tf!(
+                    "여유 RAM {:.1}GB: 텍스트 인코더를 디스크에서 읽습니다 (새 프롬프트마다 몇 초 더, RAM 부족으로 멈추지 않음)",
+                    "{:.1} GB RAM free: the text encoder is read from disk (a few seconds more per new prompt, no stalls from low RAM)",
+                    available.or(total).unwrap_or(0) as f64 / (1u64 << 30) as f64
+                )));
+            }
+            let te = if s.variant == ModelVariant::Int8 || !in_ram { "disk" } else { "cpu" };
             cmd.arg("--params-backend").arg(format!("diffusion=cpu,te={te},vae=cpu"));
         }
         // 4 GB cards: a 3 GiB budget leaves room for the desktop and driver, and the VAE
@@ -1036,10 +1050,20 @@ pub fn guided_canvas(
     (reference, init, mask)
 }
 
-/// Generic scene text used when the user gave none (the fallback path needs a scene).
-/// Below this much RAM the text encoder is read from disk instead of kept in RAM.
-const LOW_RAM_BYTES: u64 = 13_000_000_000;
+use crate::config::LOW_RAM_BYTES;
 
+/// RAM left over for Windows/Linux and the apps already open when all weights are in RAM.
+const RAM_HEADROOM: u64 = 2 << 30;
+
+/// Whether all weights can stay in RAM: the PC has the RAM (`LOW_RAM_BYTES`) and enough of
+/// it is free now. On a 16 GB PC with a browser open, the 10.2 GB in-RAM set got paged
+/// out and the engine stalled for minutes; reading the text encoder from disk instead
+/// costs ~10 s per new prompt (a repeated prompt is cached) and nothing else.
+fn weights_fit_in_ram(total: Option<u64>, available: Option<u64>, weights: u64) -> bool {
+    total.is_none_or(|t| t >= LOW_RAM_BYTES) && available.is_none_or(|a| a >= weights + RAM_HEADROOM)
+}
+
+/// Generic scene text used when the user gave none (the fallback path needs a scene).
 pub const OUTPAINT_DEFAULT: &str = "같은 공간이 넓게 보이는 한 장의 사진, 같은 배경, 같은 조명과 색감, 선명한 디테일";
 /// What the English UI shows for it; sent to the model as the tested Korean one.
 pub const OUTPAINT_DEFAULT_EN: &str = "One photo showing the same space wider, the same background, the same lighting and colors, sharp details";
@@ -1484,6 +1508,24 @@ pub fn die_with_parent(cmd: &mut Command) {
             }
             Ok(())
         });
+    }
+}
+
+#[cfg(test)]
+mod ram_tests {
+    use super::weights_fit_in_ram;
+    const GB: u64 = 1 << 30;
+
+    #[test]
+    fn text_encoder_leaves_ram_when_too_little_is_free() {
+        let weights = 10 * GB;
+        assert!(weights_fit_in_ram(Some(32 * GB), Some(20 * GB), weights));
+        // 16 GB PC with a browser open: 8.7 GB free → read from disk.
+        assert!(!weights_fit_in_ram(Some(16 * GB), Some(8 * GB + (700 << 20)), weights));
+        // 8 GB PC: always from disk.
+        assert!(!weights_fit_in_ram(Some(8 * GB), Some(7 * GB), 1));
+        // Unknown figures keep the old behaviour.
+        assert!(weights_fit_in_ram(None, None, weights));
     }
 }
 

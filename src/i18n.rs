@@ -1,4 +1,4 @@
-//! UI language (Korean default, English). The choice is a process-wide flag so any
+//! UI language (English default, Korean). The choice is a process-wide flag so any
 //! thread (UI, engine worker, captioner) can pick its strings without passing it around.
 //!
 //! `t!("한국어", "English")` picks a `&'static str`; `tf!("…{x}…", "…{x}…", args…)` is
@@ -6,7 +6,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
-static ENGLISH: AtomicBool = AtomicBool::new(false);
+static ENGLISH: AtomicBool = AtomicBool::new(true);
 
 /// True when the UI is in English.
 pub fn en() -> bool {
