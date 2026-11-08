@@ -3916,7 +3916,7 @@ impl StudioApp {
                 section(ui, t!("생성 모델", "Generation model"));
                 let int8_ok = draft.int8_supported();
                 if !int8_ok {
-                    ui.label(RichText::new(t!("INT8 텐서코어 모델은 NVIDIA CUDA 엔진에서만 동작해 표준 Q4 모델을 씁니다.", "The INT8 tensor-core model only runs on the NVIDIA CUDA engine, so the standard Q4 model is used.")).size(12.0).color(TEXT_DIM));
+                    ui.label(RichText::new(t!("INT8 텐서코어 모델은 텐서코어가 있는 NVIDIA RTX 그래픽카드(CUDA 엔진)에서만 동작해 표준 Q4 모델을 씁니다.", "The INT8 tensor-core model only runs on NVIDIA RTX cards (CUDA engine), which have tensor cores, so the standard Q4 model is used.")).size(12.0).color(TEXT_DIM));
                 }
                 ui.horizontal(|ui| {
                     let w = (ui.available_width() - 8.0) / 2.0;

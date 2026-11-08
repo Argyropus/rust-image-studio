@@ -189,7 +189,17 @@ Engineering notes. Every figure below was measured in the app on an RTX 3060 Ti 
 
 ### Windows
 
-**System requirements:** Windows 10/11 x64 · NVIDIA GPU with **8 GB+ VRAM** and a current driver (AMD Radeon: [experimental](#amd-radeon-experimental)) · 16 GB RAM · about 15 GB of free disk space · internet access on first run. No installation step: the executable has no runtime dependencies and provisions everything else on first launch. The graphics driver is the one component the app cannot install; it reports when none is found.
+**System requirements:** Windows 10/11 x64 · NVIDIA GPU with **8 GB+ VRAM** recommended, 4–6 GB works in an automatic low-VRAM mode (see below), and a current driver (AMD Radeon: [experimental](#amd-radeon-experimental)) · 16 GB RAM · about 15 GB of free disk space · internet access on first run. No installation step: the executable has no runtime dependencies and provisions everything else on first launch. The graphics driver is the one component the app cannot install; it reports when none is found.
+
+**Graphics cards with 4–6 GB of VRAM** switch to a low-VRAM mode on their own (cards with 8 GB or more keep the default settings):
+
+| VRAM | VRAM budget | VAE decode | Measured 1024×1024* |
+|---|---|---|---|
+| 8 GB and up | 6 GB | normal | ~18 s |
+| 6 GB (GTX 1660 Ti, RTX 2060, laptop RTX 3060/4050) | 4 GB | 512² tiles | ~26 s |
+| 4 GB (laptop RTX 3050, GTX 1650) | 3 GB | 512² tiles | ~28 s |
+
+\*On an RTX 3060 Ti with the rest of its VRAM held by another program to leave what a 6 GB / 4 GB card has free. Slower cards take proportionally longer (a GTX 1650-class card perhaps 50–90 s). GeForce GTX cards have no tensor cores, so the INT8 model is hidden there and the standard Q4 model is used.
 
 1. Download [`RustImageStudio-windows-x64.zip`](../../releases/latest/download/RustImageStudio-windows-x64.zip) (prebuilt binary, about 10 MB; all versions are on [Releases](../../releases)) and extract it into an empty folder.
 2. Run `RustImageStudio.exe`. No Rust toolchain, Visual Studio or source build is required; those apply only when [building from source](#build-from-source).

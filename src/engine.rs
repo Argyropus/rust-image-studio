@@ -333,11 +333,37 @@ impl Worker {
             let te = if s.variant == ModelVariant::Int8 || low_ram { "disk" } else { "cpu" };
             cmd.arg("--params-backend").arg(format!("diffusion=cpu,te={te},vae=cpu"));
         }
+        // 4 GB cards: a 3 GiB budget leaves room for the desktop and driver, and the VAE
+        // decodes in tiles (its 1024² decode is the biggest single VRAM spike). Measured on
+        // an RTX 3060 Ti with all but ~3.5 GB of VRAM held: 1024² in 21 s + 7 s decode. Cards with
+        // more memory keep the settings measured on 8 GB cards.
+        let vram = crate::config::gpu_vram_bytes();
+        let low_vram = crate::config::low_vram(vram);
+        if low_vram {
+            self.emit(EngineEvent::Log(tf!(
+                "VRAM {:.1}GB 그래픽카드: 저VRAM 모드 (VRAM 한도 3GB, VAE 타일링)",
+                "{:.1} GB VRAM card: low-VRAM mode (3 GB VRAM budget, VAE tiling)",
+                vram.unwrap_or(0) as f64 / (1u64 << 30) as f64
+            )));
+        }
         if !extra.iter().any(|a| a == "--max-vram") {
             // 6 GiB was measured on 8 GB NVIDIA cards; the AMD builds use the same budget,
             // lowered on cards with less memory.
-            let budget = if backend == GpuBackend::Cuda { 6 } else { crate::config::vram_budget_gib(crate::config::detect_gpu().vram_bytes) };
+            // Card memory minus 2 GiB for the desktop and driver, at most 6: 8 GB and larger
+            // cards keep 6 (as measured), 6 GB cards (GTX 1660 Ti, RTX 2060, laptop 3060/4050)
+            // get 4 instead of filling the whole card, 4 GB cards 3.
+            let budget = if low_vram { 3 } else { crate::config::vram_budget_gib(vram) };
             cmd.arg("--max-vram").arg(budget.to_string());
+        }
+        // Self-test only (QIS_SHOT_DIR): QIS_LOWVRAM_TILE=off|<size> to compare tilings.
+        let tile_test = std::env::var_os("QIS_SHOT_DIR").and(std::env::var("QIS_LOWVRAM_TILE").ok());
+        // 512×512 tiles on 4 and 6 GB cards: with ~3.5 GB free (4 GB card) and ~5.3 GB free
+        // (6 GB card) the untiled 1024² decode ran out of memory and had to be retried;
+        // 256² tiles took 17 s, 512² tiles 7 s; generation itself was unchanged.
+        let tile_vae = vram.is_some_and(|b| b < 7 << 30);
+        if tile_vae && !extra.iter().any(|a| a == "--vae-tiling") && tile_test.as_deref() != Some("off") {
+            let size = tile_test.filter(|t| t != "off").unwrap_or_else(|| "512x512".to_owned());
+            cmd.arg("--vae-tiling").arg("--vae-tile-size").arg(size);
         }
         cmd.args(extra);
         self.warmup_enabled = s.warmup;

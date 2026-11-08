@@ -147,7 +147,18 @@ pub fn detect_gpu() -> &'static GpuInfo {
             adapters.iter().filter(|a| a.vendor == vendor).max_by_key(|a| a.vram_bytes.unwrap_or(0)).cloned()
         };
         if nvidia_driver_present() {
-            return best(GpuVendor::Nvidia).unwrap_or(GpuInfo { vendor: GpuVendor::Nvidia, name: String::new(), vram_bytes: None, rocm_ok: false });
+            let mut g = best(GpuVendor::Nvidia).unwrap_or(GpuInfo { vendor: GpuVendor::Nvidia, name: String::new(), vram_bytes: None, rocm_ok: false });
+            // Linux exposes neither the name nor the VRAM size of an NVIDIA card in /sys:
+            // ask the driver's tool instead.
+            if g.vram_bytes.is_none() || g.name.is_empty() {
+                if let Some((name, vram)) = nvidia_smi_info() {
+                    if g.name.is_empty() {
+                        g.name = name;
+                    }
+                    g.vram_bytes = g.vram_bytes.or(Some(vram));
+                }
+            }
+            return g;
         }
         best(GpuVendor::Amd)
             .or_else(|| best(GpuVendor::Other))
@@ -332,6 +343,45 @@ pub fn pick_device(list: &str, backend: GpuBackend) -> Option<String> {
         .map(|n| n.to_string())
 }
 
+/// Name and total memory of the first NVIDIA GPU from `nvidia-smi` (installed with the driver).
+fn nvidia_smi_info() -> Option<(String, u64)> {
+    let mut cmd = std::process::Command::new("nvidia-smi");
+    cmd.args(["--query-gpu=name,memory.total", "--format=csv,noheader,nounits"]);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    let out = cmd.output().ok().filter(|o| o.status.success())?;
+    let line = String::from_utf8_lossy(&out.stdout).lines().next()?.to_owned();
+    let (name, mib) = line.rsplit_once(',')?;
+    Some((name.trim().to_owned(), mib.trim().parse::<u64>().ok()? << 20))
+}
+
+/// Whether an NVIDIA card has tensor cores, which the INT8 model's fast path needs: every
+/// GeForce RTX / professional RTX card does; GeForce GTX cards (16 series and older, e.g.
+/// the GTX 1660 Ti) don't. An unknown name counts as yes, as before this check.
+pub fn has_tensor_cores(name: &str) -> bool {
+    !name.to_ascii_lowercase().contains("gtx")
+}
+
+/// VRAM of the GPU the engine uses. Self-tests can pretend a smaller card
+/// (`QIS_FAKE_VRAM_GB`, only together with `QIS_SHOT_DIR`).
+pub fn gpu_vram_bytes() -> Option<u64> {
+    if std::env::var_os("QIS_SHOT_DIR").is_some() {
+        if let Some(gb) = std::env::var("QIS_FAKE_VRAM_GB").ok().and_then(|v| v.parse::<u64>().ok()) {
+            return Some(gb << 30);
+        }
+    }
+    detect_gpu().vram_bytes
+}
+
+/// A 4 GB-class card (under 5 GiB): the engine then keeps a 3 GiB VRAM budget and decodes
+/// the image in tiles. Larger cards keep the settings measured on 8 GB cards.
+pub fn low_vram(vram_bytes: Option<u64>) -> bool {
+    vram_bytes.is_some_and(|b| b < 5 << 30)
+}
+
 /// VRAM budget (GiB) for `--max-vram` on the ROCm/Vulkan builds: the 6 GiB tested on
 /// 8 GB NVIDIA cards, less on smaller cards (2 GiB kept free), never under 3.
 pub fn vram_budget_gib(vram_bytes: Option<u64>) -> u32 {
@@ -405,6 +455,17 @@ mod gpu_tests {
         assert_eq!(vram_budget_gib(Some(6 << 30)), 4);
         assert_eq!(vram_budget_gib(Some(4 << 30)), 3);
         assert_eq!(vram_budget_gib(Some(8176 << 20)), 6); // an "8 GB" card reporting a bit less
+        // Low-VRAM mode: 4 GB cards only; 6 GB and up keep the normal settings.
+        assert!(low_vram(Some(4 << 30)));
+        assert!(low_vram(Some(4096 << 20)));
+        assert!(!low_vram(Some(6 << 30)));
+        assert!(!low_vram(Some(8 << 30)));
+        assert!(!low_vram(None));
+        assert!(!has_tensor_cores("NVIDIA GeForce GTX 1660 Ti"));
+        assert!(!has_tensor_cores("NVIDIA GeForce GTX 1080"));
+        assert!(has_tensor_cores("NVIDIA GeForce RTX 3060 Ti"));
+        assert!(has_tensor_cores("NVIDIA RTX A2000"));
+        assert!(has_tensor_cores(""));
     }
 }
 
@@ -744,8 +805,9 @@ impl Settings {
     }
 
     /// The INT8 tensor-core model needs the CUDA build's CUTLASS INT8 kernels.
+    /// The INT8 model needs the CUDA engine and an NVIDIA card with tensor cores.
     pub fn int8_supported(&self) -> bool {
-        self.backend() == GpuBackend::Cuda
+        self.backend() == GpuBackend::Cuda && has_tensor_cores(&detect_gpu().name)
     }
 
     /// Folder of the engine build for `backend`: `runtime/` for CUDA (where it always was),
