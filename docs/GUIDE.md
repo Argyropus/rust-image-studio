@@ -48,15 +48,15 @@ Run `RustImageStudio.exe` from the extracted directory. The **First-run setup** 
 | Element | Function |
 |---|---|
 | Overall progress bar | Bytes received / total and percent. Closing the window is safe: the next launch **resumes**. |
-| **Required** | Inference engine, CUDA runtime, image model, text encoder, VAE. On Windows the Visual C++ runtime is installed first, only if missing (one UAC approval). |
+| **Required** | Inference engine, CUDA runtime, image model, text encoder, VAE. On Windows the Visual C++ runtime is installed first, only if missing (one UAC approval). On an AMD Radeon (experimental) the engine is the ROCm or Vulkan build instead and there is no CUDA runtime; see [GPU](#6-settings). |
 | **Extras** | Vision module (edit, expand, photo description), the 3 recommended LoRAs, the captioning engine. A failure here leaves core generation available; the component can be retried when its feature is used. |
 | Per-item status | ✔ done · percent · "extracting…" · "installing…" · "failed" |
 | **Stop** | Halts provisioning; it does not resume automatically during the current session. |
 | **⬇ Start download** / **⟳ Try again** | Resumes provisioning after a stop or an error. Partially received files continue via HTTP Range requests. |
-| NVIDIA driver warning | Shown with a **Get the driver** link when no driver is detected. The driver is the only component the app cannot install. |
+| Graphics card line | With the NVIDIA CUDA engine and no NVIDIA driver: a warning with **NVIDIA driver** / **AMD driver** links (the driver is the only component the app cannot install). With the ROCm or Vulkan engine: the detected card, the engine, and a note that AMD/Vulkan support is experimental and the INT8 model is NVIDIA-only. |
 | Insufficient disk space (red) | The start button stays disabled until the required space + 1 GB is free. |
 | **Already have the files? Set the paths in Settings →** | Point [Settings](#6-settings) at existing model files to skip re-downloading. |
-| (Linux) system component check | Names the package to install if glibc, `libstdc++` or `libvulkan` is missing. If the engine download fails, it offers manual build commands with a **📋 Copy commands** button. |
+| (Linux) system component check | Names the package to install if glibc, `libstdc++` or `libvulkan` is missing (for the AMD engines also `libgomp`, and for ROCm `/dev/kfd` and the ROCm 7 libraries). If the engine download fails, it offers manual build commands with a **📋 Copy commands** button. |
 
 Once provisioning completes, the engine starts automatically and "Engine ready — you can generate images" is shown.
 
@@ -122,7 +122,7 @@ From top to bottom: **modes → input image → prompt → aspect/size → seed/
 - **Quick presets**: `↔ 16:9` (horizontal) · `↕ 9:16` (vertical) · `⬜ 1:1` (square) · `4:3` · `⤢ Zoom out` (1.5× on all sides). If the input already has that aspect, it expands slightly on all sides.
 - **Left · Right · Top · Bottom** sliders (0–100 %): per-side expansion. Also adjustable by dragging in the canvas preview.
 - Resolution line: source → result resolution, number of passes and estimated time.
-- **Switch to INT8**: shown when the INT8 model is present; expansion runs about 35 % faster.
+- **Switch to INT8**: shown when the INT8 model is present and the engine is NVIDIA CUDA; expansion runs about 35 % faster.
 - **↔ Back to expand preview**: returns from the result view to the expand preview.
 - To minimize failures, Expand is fixed to Turbo 8 steps · CFG 1 · LoRA off · fast mode off, so the advanced and LoRA cards are hidden.
 
@@ -193,7 +193,7 @@ Mutually exclusive LoRAs (two speed LoRAs, or "Edit consistency" with "Multiple 
 | Element | Function |
 |---|---|
 | **⚡ Fast mode** | A Spectrum step cache replaces some of the 8 steps with predictions for about a 23 % speed-up, with deviations that are barely perceptible. Not applied in Expand. |
-| **Model: … ▾** | **Standard · Q4_K_M** (minimal RAM use) or **High quality · fast · INT8 tensor core** (faster repeated generation, quality closer to the original model). Switching restarts the engine (about 40 s). Missing model files can be downloaded from Settings. |
+| **Model: … ▾** | **Standard · Q4_K_M** (minimal RAM use) or **High quality · fast · INT8 tensor core** (faster repeated generation, quality closer to the original model). Switching restarts the engine (about 40 s). Missing model files can be downloaded from Settings. Shown only with the NVIDIA CUDA engine. |
 | **✨ Generate** | Submits a request (Ctrl+Enter). While generating it becomes **＋ Add to queue** for sequential processing; requests can be queued even while the model is loading. |
 | Status line | Resolution · seed · LoRA count · estimated time per image. With jobs active: **N in progress** and **■ Cancel all**. |
 
@@ -271,8 +271,9 @@ Open via ⚙ **Settings** in the top bar. Changes take effect only on **Save and
 
 | Item | Function |
 |---|---|
-| **Generation model** | **Standard · Q4_K_M (4.2 GB)**: minimal RAM use. **High quality · fast · INT8 tensor core (7.3 GB)**: faster per step, quality closer to the original model. If the file is missing, a **⬇ Download (7.3 GB)** button appears. |
-| **File paths** | Engine folder · Q4 model · INT8 model · text encoder · VAE · output folder. 📂 browses; ✔ found / ✖ Missing / New folder is shown on the right. Changing the output folder rebuilds the gallery from that location. |
+| **GPU** | Engine build: **Automatic → …** (shows what it picks), **NVIDIA CUDA**, **AMD ROCm (experimental)**, **Vulkan (experimental)**. Automatic uses CUDA on NVIDIA; on AMD Radeon it uses ROCm where supported (Windows: RX 6000/7000/9000 series; Linux: with ROCm 7 installed), otherwise Vulkan. Below: the detected card. Switching downloads that engine on save (Vulkan about 30–40 MB, ROCm about 270–300 MB) into `runtime\vulkan\` or `runtime\rocm\`. If the engine finds no GPU, an error suggests another option here. |
+| **Generation model** | **Standard · Q4_K_M (4.2 GB)**: minimal RAM use. **High quality · fast · INT8 tensor core (7.3 GB)**: faster per step, quality closer to the original model. If the file is missing, a **⬇ Download (7.3 GB)** button appears. The INT8 option (and the **Model** menu next to Generate) is hidden unless the engine is NVIDIA CUDA. |
+| **File paths** | Engine folder · Q4 model · INT8 model (CUDA only) · text encoder · VAE · output folder. 📂 browses; ✔ found / ✖ Missing / New folder is shown on the right. Changing the output folder rebuilds the gallery from that location. |
 | **Memory · Performance** | Describes the memory placement policy (VRAM capped at 6 GB). |
 | **Warm up at startup (recommended)** | Generates one low-resolution image right after the engine starts to cut first-image latency (about 36 s → 18 s). |
 | **Extra arguments** | Engine arguments for advanced users (e.g. `--max-vram 7`). Leave empty under normal use. |
@@ -325,7 +326,7 @@ All data is stored alongside the executable, so the installation is portable and
 
 | Path | Contents |
 |---|---|
-| `runtime\` | Inference engine and CUDA runtime (`runtime\llama\` holds the captioning engine) |
+| `runtime\` | Inference engine and CUDA runtime (`runtime\llama\` holds the captioning engine; the AMD builds go in `runtime\rocm\` and `runtime\vulkan\`) |
 | `models\` | Image model, text encoder, VAE, vision module |
 | `models\loras\` | LoRA weights. Rescan with ⟳ in the LoRA card after adding files. |
 | `outputs\` | Generated images (`date_time_seed.png`), gallery index (`history.json`), thumbnail cache (`.thumbs`) |
@@ -343,6 +344,7 @@ Notifications appear at the bottom center for 4 seconds. Status colors: **green 
 |---|---|
 | Top bar shows **Engine off** | Click the status to start the engine (about 40 s). |
 | Top bar shows **Error** | Click to restart. If it recurs, collect the log via **log → 📋 Copy all** and report it. |
+| "The engine (…) found no GPU to use" | The ROCm or Vulkan engine saw no usable GPU. Update the graphics driver, or pick another engine in **Settings → GPU** (e.g. Vulkan instead of ROCm). |
 | Generate is disabled | The engine is off or in an error state; click the status in the top bar. |
 | Edit mode does not run | The vision module is required: run **⬇ Download vision module** in the input image card. |
 | "Some extra files couldn't be downloaded" | Core generation works; the component can be fetched again when its feature is used. |

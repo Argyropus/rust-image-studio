@@ -12,6 +12,7 @@ Qwen-Image-2.1 Turbo · fully offline inference · no account, subscription or c
 ![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078d4?logo=windows&logoColor=white)
 ![Linux](https://img.shields.io/badge/Linux-x86__64%20%C2%B7%20experimental-fcc624?logo=linux&logoColor=black)
 ![NVIDIA CUDA](https://img.shields.io/badge/NVIDIA-CUDA%2012%20%C2%B7%208%20GB-76b900?logo=nvidia&logoColor=white)
+![AMD Radeon](https://img.shields.io/badge/AMD%20Radeon-ROCm%20%7C%20Vulkan%20%C2%B7%20experimental-ed1c24?logo=amd&logoColor=white)
 ![Model: Qwen-Image-2.1 Turbo](https://img.shields.io/badge/Model-Qwen--Image--2.1%20Turbo-615ced)
 
 ![Built with Claude AI](https://img.shields.io/badge/Built%20with-Claude%20AI-d97757?logo=claude&logoColor=white)
@@ -31,7 +32,7 @@ Qwen-Image-2.1 Turbo · fully offline inference · no account, subscription or c
 Engine and models are provisioned on first launch · full UI reference: **[menu guide](docs/GUIDE.md)**
 
 [Highlights](#highlights) · [Built with Claude](#built-with-claude) · [Features](#everything-in-the-box) · [Under the hood](#under-the-hood) · [Performance](#performance)<br>
-[Get started](#get-started) · [**Menu guide**](docs/GUIDE.md) · [Linux](#linux-experimental) · [Build](#build-from-source)
+[Get started](#get-started) · [**Menu guide**](docs/GUIDE.md) · [AMD Radeon](#amd-radeon-experimental) · [Linux](#linux-experimental) · [Build](#build-from-source)
 
 <img src="docs/screenshot-text.png" alt="Rust Image Studio: text to image" width="100%">
 
@@ -188,7 +189,7 @@ Engineering notes. Every figure below was measured in the app on an RTX 3060 Ti 
 
 ### Windows
 
-**System requirements:** Windows 10/11 x64 · NVIDIA GPU with **8 GB+ VRAM** and a current driver · 16 GB RAM · about 15 GB of free disk space · internet access on first run. No installation step: the executable has no runtime dependencies and provisions everything else on first launch. The NVIDIA driver is the one component the app cannot install; it reports when the driver is missing.
+**System requirements:** Windows 10/11 x64 · NVIDIA GPU with **8 GB+ VRAM** and a current driver (AMD Radeon: [experimental](#amd-radeon-experimental)) · 16 GB RAM · about 15 GB of free disk space · internet access on first run. No installation step: the executable has no runtime dependencies and provisions everything else on first launch. The graphics driver is the one component the app cannot install; it reports when none is found.
 
 1. Download [`RustImageStudio-windows-x64.zip`](../../releases/latest/download/RustImageStudio-windows-x64.zip) (prebuilt binary, about 10 MB; all versions are on [Releases](../../releases)) and extract it into an empty folder.
 2. Run `RustImageStudio.exe`. No Rust toolchain, Visual Studio or source build is required; those apply only when [building from source](#build-from-source).
@@ -197,8 +198,8 @@ Engineering notes. Every figure below was measured in the app on an RTX 3060 Ti 
 | Item | Size | From |
 |---|---|---|
 | Visual C++ runtime, only if missing (one Windows permission prompt) | 26 MB | Microsoft |
-| Generation engine: stable-diffusion.cpp, CUDA 12 | 363 MB | GitHub |
-| CUDA runtime (cudart, cuBLAS) | 563 MB | GitHub |
+| Generation engine: stable-diffusion.cpp, CUDA 12 (on AMD: ROCm 266 MB or Vulkan 30 MB instead) | 363 MB | GitHub |
+| CUDA runtime (cudart, cuBLAS), NVIDIA only | 563 MB | GitHub |
 | Qwen-Image-2.1 Turbo Q4_K_M | 4.2 GB | Hugging Face |
 | Qwen3-VL-8B text encoder | 5.1 GB | Hugging Face |
 | VAE | 676 MB | Hugging Face |
@@ -208,6 +209,47 @@ Engineering notes. Every figure below was measured in the app on an RTX 3060 Ti 
 
 Extras are optional: if one fails, core generation remains available and the component can be fetched again later. The faster INT8 model (7.3 GB) can be added from the model menu.
 Files go next to the exe (`runtime/`, `models/`, `outputs/`). Settings live in `%APPDATA%\Rust Image Studio`.
+
+### AMD Radeon (experimental)
+
+The app can run on AMD Radeon cards with stable-diffusion.cpp's **official** AMD builds of the same tag
+(`master-1052-f5df5f8`); no CUDA translation layer is involved. It picks the build from the graphics card, and
+**Settings → GPU** overrides the choice (Automatic · NVIDIA CUDA · AMD ROCm · Vulkan). Each build lives in its own folder
+(`runtime\` for CUDA, `runtime\rocm\`, `runtime\vulkan\`), so switching back and forth doesn't re-download anything.
+
+| GPU found | Engine picked automatically | Download |
+|---|---|---|
+| NVIDIA (driver present) | CUDA 12 + CUDA runtime, unchanged | 363 MB + 563 MB |
+| AMD Radeon RX 6000 / 7000 / 9000, Radeon PRO W6000–W9000, Radeon 8060S/8050S/8040S (Windows) | ROCm/HIP; the zip ships the HIP runtime DLLs, so only the AMD Adrenalin driver is needed | 266 MB |
+| Other AMD Radeon (RX 5000 and older, most integrated Radeon graphics) | Vulkan | 30 MB |
+| AMD on Linux with `/dev/kfd`, a supported `gfx` target and ROCm 7 installed (`libamdhip64.so.7`, `libhipblas.so.3`, `librocblas.so.5`) | ROCm (Ubuntu 24.04 build, glibc 2.38+) | 298 MB |
+| AMD on Linux otherwise | Vulkan (upstream builds it on Ubuntu 26.04: needs **glibc 2.43+**) | 42 MB |
+
+The device name the engine uses (`ROCm0`, `Vulkan0`) is read from `sd-server --list-devices`, and the same placement as on
+NVIDIA is used: weights mirrored in RAM, a 6 GB VRAM budget (less on cards under 8 GB). Not available off CUDA: the
+**INT8 tensor-core model** (it needs the CUDA build's CUTLASS INT8 kernels; the app uses Q4_K_M there and hides the option).
+⚡ Fast mode and every generation mode stay available. The photo describer was already a Vulkan build and runs on AMD
+drivers too.
+
+**Validation status.** For transparency: **none of this has been run on AMD hardware yet**. The development PC has an
+RTX 3060 Ti only.
+
+| Verified | Environment |
+|---|---|
+| GPU detection, backend choice, device-name parsing, the Linux ROCm zip's `build/bin/` layout, VRAM budget: unit tests | Windows |
+| The NVIDIA path is unchanged: still `CUDA0`, still the CUDA runtime download, 1024×1024 in 18.3 s / 19.5 s, all tests pass | Windows, RTX 3060 Ti |
+| Archive contents and dependencies of the four AMD zips (HIP DLLs bundled on Windows; Linux ROCm links system ROCm 7; Linux Vulkan glibc floor 2.43) | read from the published archives |
+| **The Vulkan engine path end to end in the app**: device read as `Vulkan0`, Q4_K_M generation at 1024×1024 in 21.5 s (new prompt) / 19.1 s (repeat), ⚡ Fast mode 15.1–15.8 s; the first launch's warm-up took 83 s (shader compilation), later ones 22 s | Windows, upstream Vulkan zip on the **RTX 3060 Ti** (NVIDIA's Vulkan driver, not AMD's) |
+| First-run setup with the Vulkan engine from a local mirror: no CUDA runtime in the list, the zip unpacked into `runtime\vulkan\`, the GPU line and a failed download shown on the setup screen | Windows |
+
+| Not yet verified | Reason |
+|---|---|
+| Any generation on an AMD Radeon, with either the ROCm or the Vulkan build, and its speed or VRAM behaviour | no AMD GPU available |
+| That the Windows ROCm build works with a given Adrenalin driver version, and the RX 6000/7000/9000 name heuristic for picking it | needs AMD hardware |
+| Linux ROCm with a real ROCm 7 install; the Linux Vulkan build on Ubuntu 26.04 | needs AMD hardware / a 26.04 system |
+
+If the chosen engine finds no GPU, the app says so and suggests another option in Settings → GPU (for example Vulkan instead
+of ROCm). Reports from Radeon owners (card, driver, which engine, seconds per image, or the engine log) are very welcome.
 
 ### Linux (experimental)
 

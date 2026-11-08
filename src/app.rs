@@ -1,7 +1,7 @@
 //! Main window: prompt controls (left), canvas (center), gallery (right).
 
 use crate::config::{
-    ASPECTS, GenMode, GenParams, INT8_SOURCE, ModelVariant, SIZES, Settings, StepMode, VISION_SOURCE, snap32,
+    ASPECTS, GenMode, GenParams, GpuBackend, INT8_SOURCE, ModelVariant, SIZES, Settings, StepMode, VISION_SOURCE, snap32,
 };
 use crate::inputs::{self, InputImage, Loaded, MAX_INPUTS};
 use crate::download::{self, DlEvent, DlTask};
@@ -379,7 +379,17 @@ impl StudioApp {
             if let Ok(a) = std::env::var("QIS_EXTRA_ARGS") {
                 settings.extra_args = a;
             }
+            // Self-test only: engine build (cuda / rocm / vulkan), e.g. the Vulkan build on an NVIDIA card.
+            if let Ok(b) = std::env::var("QIS_BACKEND") {
+                settings.gpu_backend = match b.as_str() {
+                    "cuda" => GpuBackend::Cuda,
+                    "rocm" => GpuBackend::Rocm,
+                    "vulkan" => GpuBackend::Vulkan,
+                    _ => GpuBackend::Auto,
+                };
+            }
         }
+        settings.fit_to_gpu();
         if std::env::var_os("QIS_SHOT_DIR").is_some() {
             if let Ok(l) = std::env::var("QIS_LANG") {
                 settings.english = l == "en";
@@ -781,7 +791,7 @@ impl StudioApp {
 
     /// Switches between Q4 and INT8 weights and restarts the engine.
     fn switch_variant(&mut self, ctx: &Context, v: ModelVariant) {
-        if v == self.settings.variant {
+        if v == self.settings.variant || (v == ModelVariant::Int8 && !self.settings.int8_supported()) {
             return;
         }
         if self.active.is_some() || !self.queue.is_empty() {
@@ -2419,7 +2429,7 @@ impl StudioApp {
             );
             // Measured on the same picture and seeds: a guided pass took ~30 s on Q4 and
             // ~19 s on the INT8 tensor-core model, with the same composition and detail.
-            if self.settings.variant == ModelVariant::Q4 && self.settings.int8_model.is_file() {
+            if self.settings.variant == ModelVariant::Q4 && self.settings.int8_model.is_file() && self.settings.int8_supported() {
                 ui.horizontal_wrapped(|ui| {
                     ui.label(RichText::new(t!("⚡ INT8 모델이면 확장이 약 35% 빨라집니다 (화질 동일).", "⚡ The INT8 model expands about 35% faster (same quality).")).size(12.0).color(ACCENT_HOVER));
                     if ui
@@ -3021,6 +3031,8 @@ impl StudioApp {
             ui.label(RichText::new(if on { t!("켜짐", "On") } else { t!("꺼짐", "Off") }).size(12.0).color(if on { ACCENT_HOVER } else { TEXT_FAINT }));
             }
 
+            // Only the CUDA build runs the INT8 model: elsewhere there is nothing to pick.
+            if self.settings.int8_supported() {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let current = self.settings.variant;
                 ui.menu_button(RichText::new(tf!("모델: {} {}", "Model: {} {}", self.settings.variant_label(), if cfg!(windows) { "▾" } else { "⏷" })).size(12.0), |ui| {
@@ -3045,6 +3057,7 @@ impl StudioApp {
                 .response
                 .on_hover_text(t!("생성 모델 바꾸기 (엔진이 다시 시작됩니다)", "Switch generation model (restarts the engine)"));
             });
+            }
         });
         if let Some(v) = switch_to {
             self.switch_variant(ui.ctx(), v);
@@ -3689,23 +3702,10 @@ impl StudioApp {
                         .size(12.0)
                         .color(TEXT_DIM),
                 );
-                if !crate::config::nvidia_driver_present() {
-                    ui.add_space(4.0);
-                    ui.horizontal_wrapped(|ui| {
-                        ui.label(
-                            RichText::new(t!(
-                                "NVIDIA 그래픽 드라이버가 보이지 않습니다. 이미지 생성에는 NVIDIA 그래픽카드(VRAM 8GB 이상)와 최신 드라이버가 필요합니다.",
-                                "No NVIDIA graphics driver found. Image generation needs an NVIDIA GPU (8 GB+ VRAM) with a current driver."
-                            ))
-                            .size(12.5)
-                            .color(AMBER),
-                        );
-                        ui.hyperlink_to(RichText::new(t!("드라이버 받기", "Get the driver")).size(12.5), "https://www.nvidia.com/Download/index.aspx");
-                    });
-                }
+                gpu_notice(ui, &self.settings);
                 // Linux: system libraries the downloads can't bring (the CUDA runtime comes with the engine).
                 #[cfg(target_os = "linux")]
-                for (what, package, required) in crate::config::missing_system_parts() {
+                for (what, package, required) in crate::config::missing_system_parts(self.settings.backend()) {
                     ui.add_space(4.0);
                     ui.label(
                         RichText::new(if *required {
@@ -3890,7 +3890,34 @@ impl StudioApp {
             .default_width(640.0)
             .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
             .show(ctx, |ui| {
+                section(ui, "GPU");
+                let gpu = crate::config::detect_gpu();
+                let detected = if gpu.name.is_empty() { t!("감지된 그래픽카드 없음", "No graphics card detected").to_owned() } else { gpu.name.clone() };
+                ui.horizontal_wrapped(|ui| {
+                    for b in GpuBackend::ALL {
+                        let label = if b == GpuBackend::Auto {
+                            tf!("자동 → {}", "Automatic → {}", crate::config::resolve_backend(GpuBackend::Auto, gpu).label())
+                        } else {
+                            b.label().to_owned()
+                        };
+                        ui.selectable_value(&mut draft.gpu_backend, b, label);
+                    }
+                });
+                ui.label(
+                    RichText::new(tf!(
+                        "감지: {} · 자동이면 NVIDIA는 CUDA, AMD Radeon은 ROCm 지원 카드(Windows: RX 6000/7000/9000 계열, Linux: ROCm 7 설치 시)면 ROCm, 그 밖에는 Vulkan을 씁니다. AMD·Vulkan은 실험 단계입니다. 바꾸면 해당 엔진(Vulkan 약 30–40MB, ROCm 약 270–300MB)을 받습니다.",
+                        "Detected: {} · Automatic uses CUDA on NVIDIA; on AMD Radeon it uses ROCm where supported (Windows: RX 6000/7000/9000 series, Linux: with ROCm 7 installed), otherwise Vulkan. AMD and Vulkan are experimental. Switching downloads that engine (Vulkan about 30–40 MB, ROCm about 270–300 MB).",
+                        detected
+                    ))
+                    .size(12.0)
+                    .color(TEXT_DIM),
+                );
+                ui.add_space(8.0);
                 section(ui, t!("생성 모델", "Generation model"));
+                let int8_ok = draft.int8_supported();
+                if !int8_ok {
+                    ui.label(RichText::new(t!("INT8 텐서코어 모델은 NVIDIA CUDA 엔진에서만 동작해 표준 Q4 모델을 씁니다.", "The INT8 tensor-core model only runs on the NVIDIA CUDA engine, so the standard Q4 model is used.")).size(12.0).color(TEXT_DIM));
+                }
                 ui.horizontal(|ui| {
                     let w = (ui.available_width() - 8.0) / 2.0;
                     for (variant, title, desc) in [
@@ -3901,6 +3928,9 @@ impl StudioApp {
                             t!("단계당 39% 빠르고 원본에 더 가깝습니다.\n같은 프롬프트 반복 시 장당 약 12초,\n프롬프트를 바꾸면 약 20초", "39% faster per step and closer to the original.\nAbout 12 s per image when repeating a prompt,\nabout 20 s with a new prompt"),
                         ),
                     ] {
+                        if variant == ModelVariant::Int8 && !int8_ok {
+                            continue;
+                        }
                         let on = draft.variant == variant;
                         let resp = Frame::new()
                             .fill(if on { ACCENT_SOFT } else { INPUT })
@@ -3920,7 +3950,7 @@ impl StudioApp {
                         }
                     }
                 });
-                if draft.variant == ModelVariant::Int8 && !draft.int8_model.is_file() {
+                if int8_ok && draft.variant == ModelVariant::Int8 && !draft.int8_model.is_file() {
                     ui.horizontal(|ui| {
                         ui.label(RichText::new(t!("INT8 모델 파일이 없습니다.", "INT8 model file not found.")).size(12.5).color(AMBER));
                         if self.dl.running {
@@ -3937,7 +3967,9 @@ impl StudioApp {
                 egui::Grid::new("paths").num_columns(3).spacing([10.0, 8.0]).show(ui, |ui| {
                     path_row(ui, t!("엔진 폴더", "Engine folder"), &mut draft.runtime_dir, true, None);
                     path_row(ui, t!("Q4 모델", "Q4 model"), &mut draft.diffusion_model, false, Some(("GGUF", &["gguf", "safetensors"])));
-                    path_row(ui, t!("INT8 모델", "INT8 model"), &mut draft.int8_model, false, Some(("safetensors", &["safetensors"])));
+                    if int8_ok {
+                        path_row(ui, t!("INT8 모델", "INT8 model"), &mut draft.int8_model, false, Some(("safetensors", &["safetensors"])));
+                    }
                     path_row(ui, t!("텍스트 인코더", "Text encoder"), &mut draft.text_encoder, false, Some(("GGUF", &["gguf", "safetensors"])));
                     path_row(ui, "VAE", &mut draft.vae, false, Some(("safetensors", &["safetensors", "gguf"])));
                     path_row(ui, t!("출력 폴더", "Output folder"), &mut draft.output_dir, true, None);
@@ -3981,7 +4013,13 @@ impl StudioApp {
             let mut draft = self.settings_draft.take().unwrap();
             draft.recent_prompts = std::mem::take(&mut self.settings.recent_prompts);
             let out_changed = draft.output_dir != self.settings.output_dir;
+            if draft.backend() != self.settings.backend() {
+                // Another engine build may have to be downloaded first.
+                self.setup_stopped = false;
+                self.setup_errors.clear();
+            }
             self.settings = draft;
+            self.settings.fit_to_gpu();
             if out_changed {
                 self.history = History::load(&self.settings.output_dir);
                 self.thumbs.clear();
@@ -4460,6 +4498,48 @@ fn pending_cell(ui: &mut Ui, cell: f32, active: Option<&Active>) {
             p.text(rect.center(), Align2::CENTER_CENTER, t!("대기 중", "Waiting"), FontId::proportional(12.5), TEXT_FAINT);
         }
     }
+}
+
+/// Setup-screen line about the graphics card: a warning when the CUDA build was chosen but
+/// no NVIDIA driver is there, a note that the AMD/Vulkan builds are experimental otherwise.
+fn gpu_notice(ui: &mut Ui, settings: &Settings) {
+    let gpu = crate::config::detect_gpu();
+    let backend = settings.backend();
+    if backend == GpuBackend::Cuda {
+        if crate::config::nvidia_driver_present() {
+            return;
+        }
+        ui.add_space(4.0);
+        ui.horizontal_wrapped(|ui| {
+            let text = if gpu.vendor == crate::config::GpuVendor::Amd {
+                t!(
+                    "NVIDIA 드라이버가 없는데 엔진이 NVIDIA CUDA로 설정되어 있습니다. 이 PC의 AMD 그래픽카드를 쓰려면 설정 → GPU를 '자동'으로 바꾸세요.",
+                    "No NVIDIA driver, but the engine is set to NVIDIA CUDA. To use this PC's AMD graphics card, set Settings → GPU to Automatic."
+                )
+            } else {
+                t!(
+                    "지원되는 그래픽 드라이버가 보이지 않습니다. 이미지 생성에는 NVIDIA 그래픽카드(VRAM 8GB 이상) 또는 AMD Radeon(실험적)과 최신 드라이버가 필요합니다.",
+                    "No supported graphics driver found. Image generation needs an NVIDIA GPU (8 GB+ VRAM) or an AMD Radeon (experimental) with a current driver."
+                )
+            };
+            ui.label(RichText::new(text).size(12.5).color(AMBER));
+            ui.hyperlink_to(RichText::new(t!("NVIDIA 드라이버", "NVIDIA driver")).size(12.5), "https://www.nvidia.com/Download/index.aspx");
+            ui.hyperlink_to(RichText::new(t!("AMD 드라이버", "AMD driver")).size(12.5), "https://www.amd.com/en/support/download/drivers.html");
+        });
+        return;
+    }
+    ui.add_space(4.0);
+    let name = if gpu.name.is_empty() { t!("알 수 없는 GPU", "unknown GPU").to_owned() } else { gpu.name.clone() };
+    ui.label(
+        RichText::new(tf!(
+            "그래픽카드: {} · 엔진: {} · AMD/Vulkan 지원은 실험 단계라 실제 AMD 하드웨어에서 아직 검증되지 않았습니다. INT8 텐서코어 모델은 NVIDIA 전용입니다.",
+            "Graphics card: {} · engine: {} · AMD/Vulkan support is experimental and not yet verified on real AMD hardware. The INT8 tensor-core model is NVIDIA-only.",
+            name,
+            backend.label()
+        ))
+        .size(12.5)
+        .color(AMBER),
+    );
 }
 
 /// Linux fallback shown when the engine archive couldn't be downloaded: how to build

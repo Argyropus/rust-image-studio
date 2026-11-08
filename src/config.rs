@@ -75,6 +75,339 @@ pub fn nvidia_driver_present() -> bool {
     *PRESENT.get_or_init(|| Path::new("/proc/driver/nvidia/version").exists() || can_load_library("libcuda.so.1"))
 }
 
+/// The GPU interface the engine runs on. stable-diffusion.cpp publishes one build per
+/// interface for the same tag; each goes in its own folder (see `Settings::engine_dir`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, Default)]
+pub enum GpuBackend {
+    /// Picked from the graphics card (`resolve_backend`).
+    #[default]
+    Auto,
+    /// NVIDIA CUDA 12: the tested path.
+    Cuda,
+    /// AMD ROCm/HIP (experimental: not run on AMD hardware by us yet).
+    Rocm,
+    /// Vulkan: any GPU with a Vulkan driver (experimental on AMD).
+    Vulkan,
+}
+
+impl GpuBackend {
+    pub const ALL: [GpuBackend; 4] = [GpuBackend::Auto, GpuBackend::Cuda, GpuBackend::Rocm, GpuBackend::Vulkan];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            GpuBackend::Auto => t!("자동", "Automatic"),
+            GpuBackend::Cuda => "NVIDIA CUDA",
+            GpuBackend::Rocm => t!("AMD ROCm (실험적)", "AMD ROCm (experimental)"),
+            GpuBackend::Vulkan => t!("Vulkan (실험적)", "Vulkan (experimental)"),
+        }
+    }
+
+    /// Start of the device names this build lists with `sd-server --list-devices`
+    /// (ggml's backend names: CUDA0, ROCm0, Vulkan0).
+    pub fn device_prefix(self) -> &'static str {
+        match self {
+            GpuBackend::Cuda => "CUDA",
+            GpuBackend::Rocm => "ROCm",
+            GpuBackend::Vulkan => "Vulkan",
+            GpuBackend::Auto => "",
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum GpuVendor {
+    Nvidia,
+    Amd,
+    /// A graphics adapter from another vendor (Intel, …).
+    Other,
+    /// Nothing recognisable was found.
+    Unknown,
+}
+
+/// The graphics card the engine will use, as far as the system tells without starting it.
+#[derive(Clone, Debug)]
+pub struct GpuInfo {
+    pub vendor: GpuVendor,
+    /// Marketing name on Windows ("AMD Radeon RX 7800 XT"); on Linux the AMD target
+    /// ("AMD Radeon (gfx1101)") or empty.
+    pub name: String,
+    pub vram_bytes: Option<u64>,
+    /// The ROCm engine build targets this GPU and, on Linux, the ROCm libraries it links
+    /// against are installed.
+    pub rocm_ok: bool,
+}
+
+/// The graphics card, detected once per run. NVIDIA wins when its driver is present
+/// (that is the tested path); otherwise the AMD adapter with the most memory.
+pub fn detect_gpu() -> &'static GpuInfo {
+    static GPU: std::sync::OnceLock<GpuInfo> = std::sync::OnceLock::new();
+    GPU.get_or_init(|| {
+        let adapters = probe_adapters();
+        let best = |vendor: GpuVendor| {
+            adapters.iter().filter(|a| a.vendor == vendor).max_by_key(|a| a.vram_bytes.unwrap_or(0)).cloned()
+        };
+        if nvidia_driver_present() {
+            return best(GpuVendor::Nvidia).unwrap_or(GpuInfo { vendor: GpuVendor::Nvidia, name: String::new(), vram_bytes: None, rocm_ok: false });
+        }
+        best(GpuVendor::Amd)
+            .or_else(|| best(GpuVendor::Other))
+            .unwrap_or(GpuInfo { vendor: GpuVendor::Unknown, name: String::new(), vram_bytes: None, rocm_ok: false })
+    })
+}
+
+/// The backend `choice` means on this PC: NVIDIA → CUDA; AMD → ROCm when the ROCm build
+/// supports the card (and, on Linux, ROCm is installed), else Vulkan. With no recognisable
+/// GPU the CUDA build stays the default, as before AMD support.
+pub fn resolve_backend(choice: GpuBackend, gpu: &GpuInfo) -> GpuBackend {
+    match (choice, gpu.vendor) {
+        (GpuBackend::Auto, GpuVendor::Amd) if gpu.rocm_ok => GpuBackend::Rocm,
+        (GpuBackend::Auto, GpuVendor::Amd) => GpuBackend::Vulkan,
+        (GpuBackend::Auto, _) => GpuBackend::Cuda,
+        (c, _) => c,
+    }
+}
+
+/// Windows ROCm build: whether its GPU targets (gfx1010–gfx1201) cover the card, judged
+/// from the marketing name. Only the RDNA2/3/4 lines that ROCm on Windows supports well
+/// are picked automatically: Radeon RX 6000/7000/9000, Radeon PRO W6000/W7000/W9000 and
+/// the Ryzen AI Max "Radeon 8060S/8050S/8040S" (gfx1151). Older or integrated Radeons use
+/// Vulkan unless ROCm is chosen in Settings.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn rocm_windows_supported(name: &str) -> bool {
+    let n = name.to_ascii_lowercase();
+    if !n.contains("radeon") {
+        return false;
+    }
+    let series_after = |marker: &str| {
+        n.split(marker).skip(1).any(|rest| {
+            let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+            digits.len() == 4 && matches!(digits.as_bytes()[0], b'6' | b'7' | b'9')
+        })
+    };
+    series_after("rx ") || series_after("pro w") || ["8060s", "8050s", "8040s"].iter().any(|m| n.contains(m))
+}
+
+/// GPU targets of the Linux ROCm build (from its release workflow).
+#[cfg_attr(windows, allow(dead_code))]
+const LINUX_ROCM_TARGETS: [&str; 27] = [
+    "gfx900", "gfx906", "gfx908", "gfx90a", "gfx90c", "gfx942", "gfx950", "gfx1010", "gfx1011", "gfx1012", "gfx1030",
+    "gfx1031", "gfx1032", "gfx1033", "gfx1034", "gfx1035", "gfx1036", "gfx1100", "gfx1101", "gfx1102", "gfx1103",
+    "gfx1150", "gfx1151", "gfx1152", "gfx1153", "gfx1200", "gfx1201",
+];
+
+/// `gfx_target_version` from the Linux KFD topology (major·10000 + minor·100 + stepping)
+/// as the target name: 110001 → "gfx1101", 90010 → "gfx90a". 0 (a CPU node) → None.
+#[cfg_attr(windows, allow(dead_code))]
+pub fn gfx_name(target_version: u32) -> Option<String> {
+    (target_version > 0).then(|| format!("gfx{}{:x}{:x}", target_version / 10000, (target_version / 100) % 100, target_version % 100))
+}
+
+/// The PCI vendor ID in a driver's `MatchingDeviceId` ("PCI\VEN_1002&DEV_747E…").
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn pci_vendor(matching_id: &str) -> Option<u16> {
+    let l = matching_id.to_ascii_lowercase();
+    let i = l.find("ven_")?;
+    u16::from_str_radix(l.get(i + 4..i + 8)?, 16).ok()
+}
+
+fn vendor_of(id: u16) -> Option<GpuVendor> {
+    match id {
+        0x10de => Some(GpuVendor::Nvidia),
+        0x1002 => Some(GpuVendor::Amd),
+        0x1414 => None, // Microsoft Basic Display / Render adapter
+        _ => Some(GpuVendor::Other),
+    }
+}
+
+/// Display adapters with a vendor driver, from the registry's display class
+/// (DriverDesc, MatchingDeviceId, HardwareInformation.qwMemorySize).
+#[cfg(windows)]
+fn probe_adapters() -> Vec<GpuInfo> {
+    const CLASS: &str = r"SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}";
+    let mut out = Vec::new();
+    for i in 0..32 {
+        let key = format!(r"{CLASS}\{i:04}");
+        let Some(id) = reg_string(&key, "MatchingDeviceId") else { continue };
+        let Some(vendor) = pci_vendor(&id).and_then(vendor_of) else { continue };
+        let name = reg_string(&key, "DriverDesc").unwrap_or_default();
+        let vram_bytes = reg_u64(&key, "HardwareInformation.qwMemorySize").or_else(|| reg_u64(&key, "HardwareInformation.MemorySize"));
+        let rocm_ok = vendor == GpuVendor::Amd && rocm_windows_supported(&name);
+        out.push(GpuInfo { vendor, name, vram_bytes, rocm_ok });
+    }
+    out
+}
+
+#[cfg(windows)]
+fn reg_raw(key: &str, value: &str, flags: u32) -> Option<Vec<u8>> {
+    use windows_sys::Win32::System::Registry::{HKEY_LOCAL_MACHINE, RegGetValueW};
+    let wide = |s: &str| s.encode_utf16().chain(std::iter::once(0)).collect::<Vec<u16>>();
+    let (k, v) = (wide(key), wide(value));
+    let mut buf = vec![0u8; 512];
+    let mut len = buf.len() as u32;
+    // SAFETY: both names are NUL-terminated; `buf`/`len` describe a writable buffer.
+    let r = unsafe { RegGetValueW(HKEY_LOCAL_MACHINE, k.as_ptr(), v.as_ptr(), flags, std::ptr::null_mut(), buf.as_mut_ptr().cast(), &mut len) };
+    (r == 0).then(|| {
+        buf.truncate(len as usize);
+        buf
+    })
+}
+
+#[cfg(windows)]
+fn reg_string(key: &str, value: &str) -> Option<String> {
+    use windows_sys::Win32::System::Registry::RRF_RT_REG_SZ;
+    let b = reg_raw(key, value, RRF_RT_REG_SZ)?;
+    let w: Vec<u16> = b.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).take_while(|c| *c != 0).collect();
+    Some(String::from_utf16_lossy(&w))
+}
+
+/// A REG_QWORD, REG_DWORD or REG_BINARY number (drivers store the memory size either way).
+#[cfg(windows)]
+fn reg_u64(key: &str, value: &str) -> Option<u64> {
+    use windows_sys::Win32::System::Registry::{RRF_RT_REG_BINARY, RRF_RT_REG_DWORD, RRF_RT_REG_QWORD};
+    let b = reg_raw(key, value, RRF_RT_REG_QWORD | RRF_RT_REG_DWORD | RRF_RT_REG_BINARY)?;
+    match b.len() {
+        4 => Some(u32::from_le_bytes(b[..4].try_into().ok()?) as u64),
+        8 => Some(u64::from_le_bytes(b[..8].try_into().ok()?)),
+        _ => None,
+    }
+    .filter(|v| *v > 0)
+}
+
+/// Linux: GPUs from `/sys/class/drm/card*/device` (vendor, VRAM); AMD targets from the KFD
+/// topology, which exists only with the amdgpu kernel driver's compute support (/dev/kfd).
+#[cfg(unix)]
+fn probe_adapters() -> Vec<GpuInfo> {
+    let read = |p: &Path| std::fs::read_to_string(p).ok().map(|s| s.trim().to_owned());
+    // ROCm-capable AMD targets present on this system.
+    let mut gfx: Vec<String> = Vec::new();
+    if let Ok(nodes) = std::fs::read_dir("/sys/class/kfd/kfd/topology/nodes") {
+        for n in nodes.flatten() {
+            let props = read(&n.path().join("properties")).unwrap_or_default();
+            let v = props.lines().find_map(|l| l.strip_prefix("gfx_target_version ")).and_then(|v| v.trim().parse::<u32>().ok());
+            gfx.extend(v.and_then(gfx_name));
+        }
+    }
+    let rocm_libs = || ["libamdhip64.so.7", "libhipblas.so.3", "librocblas.so.5"].iter().all(|l| can_load_library(l));
+    let rocm_ok = Path::new("/dev/kfd").exists() && gfx.iter().any(|g| LINUX_ROCM_TARGETS.contains(&g.as_str())) && rocm_libs();
+    let mut out = Vec::new();
+    let Ok(cards) = std::fs::read_dir("/sys/class/drm") else { return out };
+    for c in cards.flatten() {
+        let name = c.file_name().to_string_lossy().into_owned();
+        if !name.starts_with("card") || name.contains('-') {
+            continue; // connectors such as card0-HDMI-A-1
+        }
+        let dev = c.path().join("device");
+        let Some(vendor) = read(&dev.join("vendor"))
+            .and_then(|v| u16::from_str_radix(v.trim_start_matches("0x"), 16).ok())
+            .and_then(vendor_of)
+        else {
+            continue;
+        };
+        let vram_bytes = read(&dev.join("mem_info_vram_total")).and_then(|v| v.parse().ok());
+        let amd = vendor == GpuVendor::Amd;
+        let label = if amd { gfx.first().map(|g| format!("AMD Radeon ({g})")).unwrap_or_else(|| "AMD Radeon".into()) } else { String::new() };
+        out.push(GpuInfo { vendor, name: label, vram_bytes, rocm_ok: amd && rocm_ok });
+    }
+    out
+}
+
+#[cfg(not(any(windows, unix)))]
+fn probe_adapters() -> Vec<GpuInfo> {
+    Vec::new()
+}
+
+/// The device to run on from `sd-server --list-devices` output ("name<TAB>description"
+/// per line): the first one of `backend`, else the first that is not the CPU.
+pub fn pick_device(list: &str, backend: GpuBackend) -> Option<String> {
+    let names: Vec<&str> = list
+        .lines()
+        .filter_map(|l| l.split_once('\t').map(|(n, _)| n.trim()))
+        .filter(|n| !n.is_empty() && !n.contains(' '))
+        .collect();
+    let prefix = backend.device_prefix();
+    names
+        .iter()
+        .find(|n| !prefix.is_empty() && n.starts_with(prefix))
+        .or_else(|| names.iter().find(|n| !n.eq_ignore_ascii_case("cpu")))
+        .map(|n| n.to_string())
+}
+
+/// VRAM budget (GiB) for `--max-vram` on the ROCm/Vulkan builds: the 6 GiB tested on
+/// 8 GB NVIDIA cards, less on smaller cards (2 GiB kept free), never under 3.
+pub fn vram_budget_gib(vram_bytes: Option<u64>) -> u32 {
+    match vram_bytes {
+        Some(b) => (((b + (1 << 29)) >> 30) as u32).saturating_sub(2).clamp(3, 6),
+        None => 6,
+    }
+}
+
+#[cfg(test)]
+mod gpu_tests {
+    use super::*;
+
+    fn amd(rocm_ok: bool) -> GpuInfo {
+        GpuInfo { vendor: GpuVendor::Amd, name: "AMD Radeon RX 7800 XT".into(), vram_bytes: Some(16 << 30), rocm_ok }
+    }
+
+    #[test]
+    fn auto_picks_cuda_then_rocm_then_vulkan() {
+        let nv = GpuInfo { vendor: GpuVendor::Nvidia, name: String::new(), vram_bytes: None, rocm_ok: false };
+        assert_eq!(resolve_backend(GpuBackend::Auto, &nv), GpuBackend::Cuda);
+        assert_eq!(resolve_backend(GpuBackend::Auto, &amd(true)), GpuBackend::Rocm);
+        assert_eq!(resolve_backend(GpuBackend::Auto, &amd(false)), GpuBackend::Vulkan);
+        let none = GpuInfo { vendor: GpuVendor::Unknown, name: String::new(), vram_bytes: None, rocm_ok: false };
+        assert_eq!(resolve_backend(GpuBackend::Auto, &none), GpuBackend::Cuda);
+        // A choice in Settings always wins.
+        assert_eq!(resolve_backend(GpuBackend::Vulkan, &nv), GpuBackend::Vulkan);
+        assert_eq!(resolve_backend(GpuBackend::Rocm, &amd(false)), GpuBackend::Rocm);
+    }
+
+    #[test]
+    fn windows_rocm_support_from_the_name() {
+        for yes in ["AMD Radeon RX 7900 XTX", "AMD Radeon RX 6700 XT", "AMD Radeon RX 9070 XT", "AMD Radeon PRO W7800", "AMD Radeon(TM) 8060S Graphics"] {
+            assert!(rocm_windows_supported(yes), "{yes}");
+        }
+        for no in ["AMD Radeon RX 580 2048SP", "AMD Radeon RX 5700 XT", "AMD Radeon(TM) 780M", "AMD Radeon(TM) Graphics", "NVIDIA GeForce RTX 3060 Ti", "Radeon RX Vega 56"] {
+            assert!(!rocm_windows_supported(no), "{no}");
+        }
+    }
+
+    #[test]
+    fn ids_and_targets() {
+        assert_eq!(pci_vendor(r"pci\ven_1002&dev_747e&subsys_"), Some(0x1002));
+        assert_eq!(pci_vendor(r"PCI\VEN_10DE&DEV_2489"), Some(0x10de));
+        assert_eq!(pci_vendor("pci\\cc_0300"), None);
+        assert_eq!(gfx_name(110001).as_deref(), Some("gfx1101"));
+        assert_eq!(gfx_name(100300).as_deref(), Some("gfx1030"));
+        assert_eq!(gfx_name(90010).as_deref(), Some("gfx90a"));
+        assert_eq!(gfx_name(120001).as_deref(), Some("gfx1201"));
+        assert_eq!(gfx_name(0), None);
+        assert!(LINUX_ROCM_TARGETS.contains(&gfx_name(110000).unwrap().as_str()));
+    }
+
+    #[test]
+    fn device_from_list_output() {
+        // Real output of the Windows Vulkan and CUDA builds on an RTX 3060 Ti (log lines go to stderr).
+        let vk = "Vulkan0\tNVIDIA GeForce RTX 3060 Ti\nCPU\tAMD Ryzen 7 5700X 8-Core Processor             \n";
+        assert_eq!(pick_device(vk, GpuBackend::Vulkan).as_deref(), Some("Vulkan0"));
+        assert_eq!(pick_device("CUDA0\tNVIDIA GeForce RTX 3060 Ti\nCPU\tx\n", GpuBackend::Cuda).as_deref(), Some("CUDA0"));
+        assert_eq!(pick_device("ROCm0\tAMD Radeon RX 7800 XT\nCPU\tx\n", GpuBackend::Rocm).as_deref(), Some("ROCm0"));
+        // The ROCm build without a usable device lists only the CPU.
+        assert_eq!(pick_device("CPU\tAMD Ryzen 7 5700X\n", GpuBackend::Rocm), None);
+        assert_eq!(pick_device("", GpuBackend::Vulkan), None);
+    }
+
+    #[test]
+    fn vram_budget() {
+        assert_eq!(vram_budget_gib(None), 6);
+        assert_eq!(vram_budget_gib(Some(8 << 30)), 6);
+        assert_eq!(vram_budget_gib(Some(24 << 30)), 6);
+        assert_eq!(vram_budget_gib(Some(6 << 30)), 4);
+        assert_eq!(vram_budget_gib(Some(4 << 30)), 3);
+        assert_eq!(vram_budget_gib(Some(8176 << 20)), 6); // an "8 GB" card reporting a bit less
+    }
+}
+
 /// True when the dynamic loader finds and loads `name` (then unloads it again).
 #[cfg(unix)]
 pub fn can_load_library(name: &str) -> bool {
@@ -90,23 +423,59 @@ pub fn can_load_library(name: &str) -> bool {
     true
 }
 
-/// What the Linux system lacks for parts of the app: (what, the Ubuntu/Debian package to
-/// install, required for image generation). The engine archives bring their own CUDA
-/// runtime; the rest comes from the distribution. Checked once per run.
+/// What the Linux system lacks for parts of the app with the engine build of `backend`:
+/// (what, the Ubuntu/Debian package to install, required for image generation). Our CUDA
+/// archive brings its own CUDA runtime; stable-diffusion.cpp's ROCm build needs the ROCm 7
+/// libraries from the system, and its Vulkan build is made on Ubuntu 26.04. Checked once
+/// per run and backend.
 #[cfg(target_os = "linux")]
-pub fn missing_system_parts() -> &'static [(&'static str, &'static str, bool)] {
-    static MISSING: std::sync::OnceLock<Vec<(&'static str, &'static str, bool)>> = std::sync::OnceLock::new();
-    MISSING.get_or_init(|| {
+pub fn missing_system_parts(backend: GpuBackend) -> &'static [(&'static str, &'static str, bool)] {
+    type Parts = Vec<(&'static str, &'static str, bool)>;
+    static MISSING: [std::sync::OnceLock<Parts>; 3] = [const { std::sync::OnceLock::new() }; 3];
+    let slot = match backend {
+        GpuBackend::Rocm => 1,
+        GpuBackend::Vulkan => 2,
+        _ => 0,
+    };
+    MISSING[slot].get_or_init(|| {
         let mut v = Vec::new();
-        // The engine is built on Ubuntu 22.04: it needs glibc 2.35 or newer.
-        if glibc_version().is_some_and(|(major, minor)| (major, minor) < (2, 35)) {
-            v.push(("glibc 2.35+", "Ubuntu 22.04 / Debian 12 or newer", true));
+        // Oldest glibc each engine build runs on (CUDA: ours, built on Ubuntu 22.04;
+        // ROCm: Ubuntu 24.04; Vulkan: Ubuntu 26.04 — measured from the binaries' symbols).
+        let (floor, distro) = match backend {
+            GpuBackend::Rocm => ((2, 38), "Ubuntu 24.04 or newer"),
+            GpuBackend::Vulkan => ((2, 43), "Ubuntu 26.04 or newer"),
+            _ => ((2, 35), "Ubuntu 22.04 / Debian 12 or newer"),
+        };
+        if glibc_version().is_some_and(|ver| ver < floor) {
+            v.push((
+                match backend {
+                    GpuBackend::Rocm => "glibc 2.38+",
+                    GpuBackend::Vulkan => "glibc 2.43+",
+                    _ => "glibc 2.35+",
+                },
+                distro,
+                true,
+            ));
         }
         if !can_load_library("libstdc++.so.6") {
             v.push(("libstdc++.so.6", "libstdc++6", true));
         }
+        if backend != GpuBackend::Cuda && !can_load_library("libgomp.so.1") {
+            v.push(("libgomp.so.1", "libgomp1", true));
+        }
+        if backend == GpuBackend::Rocm {
+            if !Path::new("/dev/kfd").exists() {
+                v.push(("/dev/kfd", "amdgpu kernel driver (user in the 'render' group)", true));
+            }
+            for (lib, pkg) in [("libamdhip64.so.7", "ROCm 7 (hip-runtime-amd)"), ("libhipblas.so.3", "ROCm 7 (hipblas)"), ("librocblas.so.5", "ROCm 7 (rocblas)")] {
+                if !can_load_library(lib) {
+                    v.push((lib, pkg, true));
+                }
+            }
+        }
         if !can_load_library("libvulkan.so.1") {
-            v.push(("libvulkan.so.1", "libvulkan1", false));
+            // The photo describer always uses Vulkan; the Vulkan engine needs it too.
+            v.push(("libvulkan.so.1", "libvulkan1", backend == GpuBackend::Vulkan));
         }
         v
     })
@@ -190,6 +559,61 @@ pub const CUDART_SOURCE: ModelSource = ModelSource {
     unzip: true,
 };
 
+/// AMD builds of the same stable-diffusion.cpp tag. The Windows ROCm zip ships the HIP
+/// runtime DLLs (amdhip64_7, amd_comgr, rocm_kpack) next to sd-server.exe, so only the
+/// AMD graphics driver is needed; the Vulkan zip runs on any GPU with a Vulkan driver.
+#[cfg(windows)]
+pub const ENGINE_ROCM_SOURCE: ModelSource = ModelSource {
+    label: "생성 엔진 (stable-diffusion.cpp, AMD ROCm)",
+    label_en: "Generation engine (stable-diffusion.cpp, AMD ROCm)",
+    file: "sd-master-f5df5f8-bin-win-rocm-10.1.0-x64.zip",
+    url: "https://github.com/leejet/stable-diffusion.cpp/releases/download/master-1052-f5df5f8/sd-master-f5df5f8-bin-win-rocm-10.1.0-x64.zip",
+    approx_bytes: 265_984_750,
+    unzip: true,
+};
+
+#[cfg(windows)]
+pub const ENGINE_VULKAN_SOURCE: ModelSource = ModelSource {
+    label: "생성 엔진 (stable-diffusion.cpp, Vulkan)",
+    label_en: "Generation engine (stable-diffusion.cpp, Vulkan)",
+    file: "sd-master-f5df5f8-bin-win-vulkan-x64.zip",
+    url: "https://github.com/leejet/stable-diffusion.cpp/releases/download/master-1052-f5df5f8/sd-master-f5df5f8-bin-win-vulkan-x64.zip",
+    approx_bytes: 29_863_784,
+    unzip: true,
+};
+
+/// Linux ROCm build (Ubuntu 24.04, files under `build/bin/` in the zip). It links the
+/// system's ROCm 7 libraries (libamdhip64.so.7, libhipblas.so.3, librocblas.so.5).
+#[cfg(not(windows))]
+pub const ENGINE_ROCM_SOURCE: ModelSource = ModelSource {
+    label: "생성 엔진 (stable-diffusion.cpp, AMD ROCm)",
+    label_en: "Generation engine (stable-diffusion.cpp, AMD ROCm)",
+    file: "sd-master-f5df5f8-bin-Linux-Ubuntu-24.04-x86_64-rocm-10.1.0.zip",
+    url: "https://github.com/leejet/stable-diffusion.cpp/releases/download/master-1052-f5df5f8/sd-master-f5df5f8-bin-Linux-Ubuntu-24.04-x86_64-rocm-10.1.0.zip",
+    approx_bytes: 298_402_307,
+    unzip: true,
+};
+
+/// Linux Vulkan build. Made on Ubuntu 26.04: needs glibc 2.43 or newer.
+#[cfg(not(windows))]
+pub const ENGINE_VULKAN_SOURCE: ModelSource = ModelSource {
+    label: "생성 엔진 (stable-diffusion.cpp, Vulkan)",
+    label_en: "Generation engine (stable-diffusion.cpp, Vulkan)",
+    file: "sd-master-f5df5f8-bin-Linux-Ubuntu-26.04-x86_64-vulkan.zip",
+    url: "https://github.com/leejet/stable-diffusion.cpp/releases/download/master-1052-f5df5f8/sd-master-f5df5f8-bin-Linux-Ubuntu-26.04-x86_64-vulkan.zip",
+    approx_bytes: 41_670_193,
+    unzip: true,
+};
+
+/// The engine archive for `backend` (Auto is resolved by the caller; it maps to CUDA).
+pub fn engine_source(backend: GpuBackend) -> &'static ModelSource {
+    match backend {
+        GpuBackend::Rocm => &ENGINE_ROCM_SOURCE,
+        GpuBackend::Vulkan => &ENGINE_VULKAN_SOURCE,
+        GpuBackend::Cuda | GpuBackend::Auto => &ENGINE_SOURCE,
+    }
+}
+
 /// llama.cpp Vulkan build: runs the photo describer (llama-mtmd-cli) on the GPU.
 #[cfg(windows)]
 pub const CAPTION_SOURCE: ModelSource = ModelSource {
@@ -202,7 +626,7 @@ pub const CAPTION_SOURCE: ModelSource = ModelSource {
 };
 
 /// The same llama.cpp release, Ubuntu x64 Vulkan build (a .tar.gz with one top folder,
-/// `llama-b12182/`, which extraction strips). Needs `libvulkan1` and the NVIDIA driver's
+/// `llama-b12182/`, which extraction strips). Needs `libvulkan1` and the GPU driver's
 /// Vulkan ICD at run time.
 #[cfg(not(windows))]
 pub const CAPTION_SOURCE: ModelSource = ModelSource {
@@ -287,6 +711,8 @@ pub struct Settings {
     pub recent_prompts: Vec<String>,
     /// UI language: false = 한국어 (default), true = English.
     pub english: bool,
+    /// GPU interface for the engine; Auto picks it from the graphics card.
+    pub gpu_backend: GpuBackend,
 }
 
 impl Default for Settings {
@@ -306,15 +732,41 @@ impl Default for Settings {
             extra_args: String::new(),
             recent_prompts: Vec::new(),
             english: false,
+            gpu_backend: GpuBackend::Auto,
         }
     }
 }
 
 impl Settings {
-    /// The engine executable: `runtime/sd-server(.exe)`. On Linux a self-built `sd-server`
-    /// on PATH is used when the runtime folder has none.
+    /// The GPU interface the engine runs on (`gpu_backend` with Auto resolved).
+    pub fn backend(&self) -> GpuBackend {
+        resolve_backend(self.gpu_backend, detect_gpu())
+    }
+
+    /// The INT8 tensor-core model needs the CUDA build's CUTLASS INT8 kernels.
+    pub fn int8_supported(&self) -> bool {
+        self.backend() == GpuBackend::Cuda
+    }
+
+    /// Folder of the engine build for `backend`: `runtime/` for CUDA (where it always was),
+    /// `runtime/rocm/` and `runtime/vulkan/` for the AMD builds, whose DLLs share names
+    /// with the CUDA build's (ggml-base, stable-diffusion, …).
+    pub fn engine_dir_for(&self, backend: GpuBackend) -> PathBuf {
+        match backend {
+            GpuBackend::Rocm => self.runtime_dir.join("rocm"),
+            GpuBackend::Vulkan => self.runtime_dir.join("vulkan"),
+            GpuBackend::Cuda | GpuBackend::Auto => self.runtime_dir.clone(),
+        }
+    }
+
+    pub fn engine_dir(&self) -> PathBuf {
+        self.engine_dir_for(self.backend())
+    }
+
+    /// The engine executable: `sd-server(.exe)` in `engine_dir`. On Linux a self-built
+    /// `sd-server` on PATH is used when that folder has none.
     pub fn server_exe(&self) -> PathBuf {
-        let local = self.runtime_dir.join(SERVER_EXE);
+        let local = self.engine_dir().join(SERVER_EXE);
         #[cfg(unix)]
         if !local.is_file() {
             if let Some(p) = find_on_path(SERVER_EXE) {
@@ -379,6 +831,8 @@ impl Settings {
             #[cfg(windows)]
             f if f == VCREDIST_SOURCE.file => self.runtime_dir.join(f),
             f if f == ENGINE_SOURCE.file || f == CUDART_SOURCE.file => self.runtime_dir.join(f),
+            f if f == ENGINE_ROCM_SOURCE.file => self.engine_dir_for(GpuBackend::Rocm).join(f),
+            f if f == ENGINE_VULKAN_SOURCE.file => self.engine_dir_for(GpuBackend::Vulkan).join(f),
             f if f == CAPTION_SOURCE.file => self.runtime_dir.join("llama").join(f),
             f if crate::lora::RECOMMENDED.iter().any(|(s, _)| s.file == f) => self.lora_dir().join(f),
             f => self.model_path_for(f),
@@ -390,7 +844,10 @@ impl Settings {
         match src.file {
             #[cfg(windows)]
             f if f == VCREDIST_SOURCE.file => vcredist_installed(),
-            f if f == ENGINE_SOURCE.file => self.server_exe().is_file(),
+            f if f == engine_source(self.backend()).file => self.server_exe().is_file(),
+            f if f == ENGINE_SOURCE.file => self.runtime_dir.join(SERVER_EXE).is_file(),
+            f if f == ENGINE_ROCM_SOURCE.file => self.engine_dir_for(GpuBackend::Rocm).join(SERVER_EXE).is_file(),
+            f if f == ENGINE_VULKAN_SOURCE.file => self.engine_dir_for(GpuBackend::Vulkan).join(SERVER_EXE).is_file(),
             #[cfg(windows)]
             f if f == CUDART_SOURCE.file => self.runtime_dir.join("cudart64_12.dll").is_file(),
             // Only our engine archive needs this download. A self-built sd-server, whether on
@@ -409,9 +866,9 @@ impl Settings {
     }
 
     /// Everything the first run fetches, in download order, with whether it is required.
-    /// Required: engine + CUDA runtime + the three model files. Then the extras that the
-    /// edit/expand/describe features and the LoRA card use.
-    /// On Linux the engine and CUDA runtime come from this repository's own release (see
+    /// Required: the engine for this GPU (+ the CUDA runtime on NVIDIA) + the three model
+    /// files. Then the extras that the edit/expand/describe features and the LoRA card use.
+    /// On Linux the CUDA engine and runtime come from this repository's own release (see
     /// `linux_engine_release!`); Windows also installs the Visual C++ runtime first.
     pub fn setup_items(&self) -> Vec<(&'static ModelSource, bool)> {
         let diffusion: &'static ModelSource = match self.variant {
@@ -421,7 +878,11 @@ impl Settings {
         let mut v: Vec<(&'static ModelSource, bool)> = Vec::new();
         #[cfg(windows)]
         v.push((&VCREDIST_SOURCE, true));
-        v.extend([(&ENGINE_SOURCE, true), (&CUDART_SOURCE, true)]);
+        let backend = self.backend();
+        v.push((engine_source(backend), true));
+        if backend == GpuBackend::Cuda {
+            v.push((&CUDART_SOURCE, true));
+        }
         v.push((diffusion, true));
         v.extend(MODEL_SOURCES[1..].iter().map(|m| (m, true)));
         v.push((&VISION_SOURCE, false));
@@ -430,7 +891,14 @@ impl Settings {
         v
     }
 
-    /// Engine, CUDA runtime and models are all present: the app can generate.
+    /// Off CUDA the INT8 model can't run: fall back to Q4 (the choice is hidden there).
+    pub fn fit_to_gpu(&mut self) {
+        if self.variant == ModelVariant::Int8 && !self.int8_supported() {
+            self.variant = ModelVariant::Q4;
+        }
+    }
+
+    /// Engine (+ CUDA runtime on NVIDIA) and models are all present: the app can generate.
     pub fn core_ready(&self) -> bool {
         self.runtime_ok() && self.setup_items().iter().filter(|(_, req)| *req).all(|(s, _)| self.installed(s))
     }
@@ -538,7 +1006,7 @@ pub fn app_base_dir() -> PathBuf {
     }
     candidates
         .iter()
-        .find(|d| d.join("runtime").join(SERVER_EXE).is_file())
+        .find(|d| ["", "vulkan", "rocm"].iter().any(|sub| d.join("runtime").join(sub).join(SERVER_EXE).is_file()))
         .cloned()
         .unwrap_or(exe_dir)
 }

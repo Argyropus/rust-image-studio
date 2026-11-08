@@ -1,7 +1,7 @@
 //! Background engine: owns the `sd-server` process (stable-diffusion.cpp), keeps the
 //! model loaded in memory, and runs generation jobs through its async HTTP API.
 
-use crate::config::{GenMode, ModelVariant, Settings, StepMode, TURBO_SIGMAS};
+use crate::config::{GenMode, GpuBackend, ModelVariant, Settings, StepMode, TURBO_SIGMAS};
 use anyhow::{Context as _, Result, anyhow, bail};
 use base64::Engine as _;
 use egui::ColorImage;
@@ -273,7 +273,7 @@ impl Worker {
         self.base_url = format!("http://127.0.0.1:{port}");
 
         let mut cmd = Command::new(&exe);
-        cmd.current_dir(&s.runtime_dir)
+        cmd.current_dir(s.engine_dir())
             .arg("--listen-ip")
             .arg("127.0.0.1")
             .arg("--listen-port")
@@ -306,14 +306,38 @@ impl Worker {
         let extra = split_args(&s.extra_args);
         let user_placement =
             extra.iter().any(|a| a == "--backend" || a == "--params-backend" || a == "--offload-to-cpu");
+        // The AMD builds (ROCm, Vulkan) name their devices differently (ROCm0, Vulkan0),
+        // so the device comes from the engine's own list; CUDA keeps its tested CUDA0.
+        let backend = s.backend();
         if !user_placement {
-            cmd.args(["--backend", "diffusion=CUDA0,te=CUDA0,vae=CUDA0"]);
+            let device = if backend == GpuBackend::Cuda {
+                "CUDA0".to_owned()
+            } else {
+                let list = list_devices(&exe, &s.engine_dir())?;
+                for l in list.lines().filter(|l| !l.trim().is_empty()) {
+                    self.emit(EngineEvent::Log(tf!("장치: {}", "Device: {}", l.replace('\t', " · ").trim_end())));
+                }
+                crate::config::pick_device(&list, backend).ok_or_else(|| {
+                    anyhow!(
+                        "{}",
+                        tf!(
+                            "엔진({})이 사용할 GPU를 찾지 못했습니다. 그래픽 드라이버를 최신으로 설치하거나, 설정 → GPU에서 다른 방식(예: Vulkan)을 고르세요.",
+                            "The engine ({}) found no GPU to use. Install a current graphics driver, or pick another option (e.g. Vulkan) in Settings → GPU.",
+                            backend.label()
+                        )
+                    )
+                })?
+            };
+            cmd.arg("--backend").arg(format!("diffusion={device},te={device},vae={device}"));
             let low_ram = crate::config::total_ram_bytes().is_some_and(|b| b < LOW_RAM_BYTES);
             let te = if s.variant == ModelVariant::Int8 || low_ram { "disk" } else { "cpu" };
             cmd.arg("--params-backend").arg(format!("diffusion=cpu,te={te},vae=cpu"));
         }
         if !extra.iter().any(|a| a == "--max-vram") {
-            cmd.args(["--max-vram", "6"]);
+            // 6 GiB was measured on 8 GB NVIDIA cards; the AMD builds use the same budget,
+            // lowered on cards with less memory.
+            let budget = if backend == GpuBackend::Cuda { 6 } else { crate::config::vram_budget_gib(crate::config::detect_gpu().vram_bytes) };
+            cmd.arg("--max-vram").arg(budget.to_string());
         }
         cmd.args(extra);
         self.warmup_enabled = s.warmup;
@@ -1313,6 +1337,51 @@ fn pump_log(pipe: Box<dyn Read + Send>, tx: Sender<EngineEvent>) {
             }
         }
     }
+}
+
+/// `sd-server --list-devices` ("name<TAB>description" per line on stdout; the backends'
+/// own log lines go to stderr and are dropped). A list with a GPU is kept for the rest of
+/// the run, so engine restarts don't pay for the device scan again. Gives up after 60 s.
+fn list_devices(exe: &std::path::Path, dir: &std::path::Path) -> Result<String> {
+    static CACHE: std::sync::Mutex<Vec<(PathBuf, String)>> = std::sync::Mutex::new(Vec::new());
+    if let Some((_, l)) = CACHE.lock().ok().and_then(|c| c.iter().find(|(p, _)| p == exe).cloned()) {
+        return Ok(l);
+    }
+    let mut cmd = Command::new(exe);
+    cmd.current_dir(dir).arg("--list-devices").stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    #[cfg(target_os = "linux")]
+    die_with_parent(&mut cmd);
+    let mut child = cmd.spawn().context(t!("sd-server 실행 실패", "Failed to start sd-server"))?;
+    let mut out = child.stdout.take().ok_or_else(|| anyhow!("no stdout"))?;
+    let reader = std::thread::spawn(move || {
+        let mut s = String::new();
+        let _ = out.read_to_string(&mut s);
+        s
+    });
+    let start = Instant::now();
+    loop {
+        if child.try_wait()?.is_some() {
+            break;
+        }
+        if start.elapsed() > Duration::from_secs(60) {
+            let _ = child.kill();
+            let _ = child.wait();
+            bail!("{}", t!("엔진이 GPU 목록을 60초 안에 내놓지 않았습니다.", "The engine did not list its GPUs within 60 s."));
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let list = reader.join().unwrap_or_default();
+    if list.lines().any(|l| l.contains('\t') && !l.starts_with("CPU")) {
+        if let Ok(mut c) = CACHE.lock() {
+            c.push((exe.to_path_buf(), list.clone()));
+        }
+    }
+    Ok(list)
 }
 
 /// Splits a user-supplied argument string, honouring double quotes.

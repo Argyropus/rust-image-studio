@@ -12,6 +12,7 @@ Qwen-Image-2.1 Turbo · 완전 오프라인 추론 · 계정·구독·클라우�
 ![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078d4?logo=windows&logoColor=white)
 ![Linux](https://img.shields.io/badge/Linux-x86__64%20%C2%B7%20experimental-fcc624?logo=linux&logoColor=black)
 ![NVIDIA CUDA](https://img.shields.io/badge/NVIDIA-CUDA%2012%20%C2%B7%208%20GB-76b900?logo=nvidia&logoColor=white)
+![AMD Radeon](https://img.shields.io/badge/AMD%20Radeon-ROCm%20%7C%20Vulkan%20%C2%B7%20experimental-ed1c24?logo=amd&logoColor=white)
 ![Model: Qwen-Image-2.1 Turbo](https://img.shields.io/badge/Model-Qwen--Image--2.1%20Turbo-615ced)
 
 ![Built with Claude AI](https://img.shields.io/badge/Built%20with-Claude%20AI-d97757?logo=claude&logoColor=white)
@@ -87,12 +88,12 @@ Rust Image Studio는 AKAN이 제품 비주얼 제작을 위해 구축한 인하�
 
 ## 빠른 시작
 ### Windows
-**시스템 요구 사항:** Windows 10/11 x64 · **VRAM 8GB 이상** NVIDIA GPU(최신 드라이버) · RAM 16GB · 여유 디스크 약 15GB · 최초 실행 시 인터넷 연결. 별도 설치 과정은 없습니다. 실행 파일 하나로 기동하며 나머지 구성 요소는 최초 실행 시 자동으로 내려받습니다. 단, NVIDIA 드라이버는 애플리케이션이 설치할 수 없으므로 미검출 시 화면에 안내합니다.
+**시스템 요구 사항:** Windows 10/11 x64 · **VRAM 8GB 이상** NVIDIA GPU(최신 드라이버, AMD Radeon은 [실험적](#amd-radeon-실험적)) · RAM 16GB · 여유 디스크 약 15GB · 최초 실행 시 인터넷 연결. 별도 설치 과정은 없습니다. 실행 파일 하나로 기동하며 나머지 구성 요소는 최초 실행 시 자동으로 내려받습니다. 단, 그래픽 드라이버는 애플리케이션이 설치할 수 없으므로 미검출 시 화면에 안내합니다.
 
 1. [`RustImageStudio-windows-x64.zip`](../../releases/latest/download/RustImageStudio-windows-x64.zip)(사전 빌드 바이너리, 약 10MB · 이전 버전은 [Releases](../../releases))을 내려받아 빈 폴더에 압축을 해제합니다.
 2. `RustImageStudio.exe`를 실행합니다. Rust 툴체인·Visual Studio·소스 빌드는 필요하지 않습니다([직접 빌드](#빌드) 시에만 해당).
 3. 최초 실행 시 필요한 구성 요소를 **자동으로** 프로비저닝합니다(약 12.7GB, 중단 시 다음 실행에서 이어받기).
-   - 필수: Visual C++ 런타임(미설치 시에만, UAC 확인 1회) · 추론 엔진(stable-diffusion.cpp CUDA 12) · CUDA 런타임 · 이미지 모델 · 텍스트 인코더 · VAE
+   - 필수: Visual C++ 런타임(미설치 시에만, UAC 확인 1회) · 추론 엔진(stable-diffusion.cpp CUDA 12, AMD에서는 ROCm 또는 Vulkan 빌드) · CUDA 런타임(NVIDIA 전용) · 이미지 모델 · 텍스트 인코더 · VAE
    - 선택: 비전 모듈(편집·확장·사진 설명) · 추천 LoRA 3종 · 캡셔닝 엔진(llama.cpp Vulkan)
    - 선택 구성 요소 다운로드에 실패해도 기본 생성 기능은 즉시 사용할 수 있으며, 시작 전 디스크 여유 공간을 사전 검증합니다.
 
@@ -105,12 +106,51 @@ UI 기본 언어는 한국어이며, 상단 바의 **한 | EN** 토글로 영어
 RustImageStudio.exe
 runtime/   sd-server.exe, stable-diffusion.dll, ggml-cuda.dll, cudart/cublas DLL
            llama/  (선택: 사진 자동 설명용 llama.cpp Vulkan 빌드)
+           rocm/, vulkan/  (AMD Radeon 등에서 쓰는 엔진 빌드, 해당할 때만)
 models/    qwen-image-2.1-turbo-Q4_K_M.gguf
            Qwen3-VL-8B-Instruct-UD-Q4_K_XL.gguf
            qwen_image_2.1_vae_bf16.safetensors
            mmproj-Qwen3-VL-8B-F16.gguf   (선택: 이미지 편집 모드용 비전 모듈)
 outputs/   생성 이미지 + history.json (자동 생성)
 ```
+
+## AMD Radeon (실험적)
+
+stable-diffusion.cpp가 같은 태그(`master-1052-f5df5f8`)로 배포하는 **공식** AMD 빌드를 사용합니다. CUDA 변환 계층(ZLUDA 등)은
+쓰지 않습니다. 그래픽카드를 감지해 엔진 빌드를 자동으로 고르며, **설정 → GPU**(자동 · NVIDIA CUDA · AMD ROCm · Vulkan)에서
+직접 지정할 수 있습니다. 빌드마다 폴더가 분리되어(`runtime\` = CUDA, `runtime\rocm\`, `runtime\vulkan\`) 전환해도 다시 받지 않습니다.
+
+| 감지된 GPU | 자동 선택 엔진 | 다운로드 |
+|---|---|---|
+| NVIDIA (드라이버 있음) | CUDA 12 + CUDA 런타임 (기존과 동일) | 363MB + 563MB |
+| AMD Radeon RX 6000 / 7000 / 9000, Radeon PRO W6000–W9000, Radeon 8060S/8050S/8040S (Windows) | ROCm/HIP. zip에 HIP 런타임 DLL이 포함되어 AMD Adrenalin 드라이버만 있으면 됩니다 | 266MB |
+| 그 밖의 AMD Radeon (RX 5000 이하, 대부분의 내장 Radeon 그래픽) | Vulkan | 30MB |
+| Linux AMD + `/dev/kfd` + 지원 `gfx` 타깃 + ROCm 7 설치(`libamdhip64.so.7`, `libhipblas.so.3`, `librocblas.so.5`) | ROCm (Ubuntu 24.04 빌드, glibc 2.38 이상) | 298MB |
+| 그 밖의 Linux AMD | Vulkan (업스트림이 Ubuntu 26.04에서 빌드: **glibc 2.43 이상** 필요) | 42MB |
+
+엔진이 쓸 장치 이름(`ROCm0`, `Vulkan0`)은 `sd-server --list-devices` 출력에서 읽으며, 메모리 배치는 NVIDIA와 동일합니다(가중치 RAM
+사본, VRAM 6GB 한도, 8GB 미만 카드는 더 낮게). CUDA가 아니면 **INT8 텐서코어 모델**은 쓸 수 없습니다(CUDA 빌드의 CUTLASS INT8
+커널 필요). 이 경우 Q4_K_M을 사용하고 해당 선택지를 숨깁니다. ⚡ 빠른 모드와 모든 생성 모드는 그대로 사용할 수 있으며, 사진 설명
+엔진은 원래 Vulkan 빌드라 AMD 드라이버에서도 동작합니다.
+
+**검증 현황.** 투명하게 밝히면, **실제 AMD 하드웨어에서는 아직 한 번도 실행해 보지 않았습니다.** 개발 PC에는 RTX 3060 Ti만 있습니다.
+
+| 검증 완료 | 환경 |
+|---|---|
+| GPU 감지, 엔진 선택, 장치 이름 파싱, Linux ROCm zip의 `build/bin/` 구조 처리, VRAM 한도 계산: 단위 테스트 | Windows |
+| NVIDIA 경로 무변경: 여전히 `CUDA0`·CUDA 런타임 다운로드, 1024×1024 18.3초/19.5초, 전체 테스트 통과 | Windows, RTX 3060 Ti |
+| AMD zip 4종의 구성·의존성(Windows는 HIP DLL 포함, Linux ROCm은 시스템 ROCm 7 링크, Linux Vulkan은 glibc 2.43 필요) | 배포 아카이브 직접 분석 |
+| **앱에서 Vulkan 엔진 경로 전체 동작**: 장치 `Vulkan0` 인식, Q4_K_M 1024×1024 21.5초(새 프롬프트)/19.1초(반복), ⚡ 빠른 모드 15.1–15.8초. 최초 실행 예열 83초(셰이더 컴파일), 이후 22초 | Windows, 업스트림 Vulkan zip을 **RTX 3060 Ti**에서 실행(AMD가 아닌 NVIDIA Vulkan 드라이버) |
+| 로컬 미러로 Vulkan 엔진 최초 설치: 목록에 CUDA 런타임 없음, `runtime\vulkan\`에 압축 해제, 설치 화면의 GPU 안내·다운로드 실패 표시 | Windows |
+
+| 미검증 | 이유 |
+|---|---|
+| AMD Radeon에서의 실제 생성(ROCm·Vulkan 모두), 속도와 VRAM 동작 | AMD GPU 없음 |
+| Windows ROCm 빌드와 Adrenalin 드라이버 버전의 호환성, RX 6000/7000/9000 이름 기반 자동 선택 기준 | AMD 하드웨어 필요 |
+| 실제 ROCm 7이 설치된 Linux의 ROCm 엔진, Ubuntu 26.04에서의 Linux Vulkan 엔진 | AMD 하드웨어 / 26.04 환경 필요 |
+
+선택한 엔진이 GPU를 찾지 못하면 앱이 이를 알리고 설정 → GPU에서 다른 방식(예: ROCm 대신 Vulkan)을 고르도록 안내합니다.
+Radeon 사용자분들의 결과 공유(카드, 드라이버, 엔진 종류, 장당 시간 또는 엔진 로그)를 환영합니다.
 
 ## Linux (실험적)
 

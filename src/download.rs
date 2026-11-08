@@ -240,7 +240,15 @@ fn stage_zip(zip_path: &Path, dir: &Path) -> Result<Staged> {
     let mut staged = Staged::default();
     for i in 0..archive.len() {
         let mut entry = archive.by_index(i)?;
-        let Some(rel) = entry.enclosed_name() else { continue };
+        let Some(mut rel) = entry.enclosed_name() else { continue };
+        // stable-diffusion.cpp's Linux ROCm zip keeps its CMake output folder
+        // (`build/bin/sd-server`, …): those files belong next to each other in `dir`.
+        if let Ok(r) = rel.strip_prefix("build/bin") {
+            rel = r.to_path_buf();
+        }
+        if rel.as_os_str().is_empty() || rel == Path::new("build") {
+            continue;
+        }
         let out = dir.join(rel);
         if entry.is_dir() {
             std::fs::create_dir_all(&out)?;
@@ -460,6 +468,35 @@ mod tests {
             let m = std::fs::metadata(d.join("sd-server")).unwrap().permissions().mode();
             assert_eq!(m & 0o111, 0o111);
         }
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn zip_build_bin_folder_is_flattened() {
+        // Layout of stable-diffusion.cpp's Linux ROCm zip.
+        let d = scratch("zip-build-bin");
+        let a = d.join("rocm.zip");
+        {
+            let mut w = zip::ZipWriter::new(std::fs::File::create(&a).unwrap());
+            let o = zip::write::SimpleFileOptions::default().unix_permissions(0o755);
+            w.add_directory("build/", o).unwrap();
+            w.add_directory("build/bin/", o).unwrap();
+            w.start_file("build/bin/sd-server", o).unwrap();
+            w.write_all(b"srv").unwrap();
+            w.start_file("build/bin/libggml-base.so.0.27.0", o).unwrap();
+            w.write_all(b"lib").unwrap();
+            w.add_symlink("build/bin/libggml-base.so.0", "libggml-base.so.0.27.0", o).unwrap();
+            w.start_file("start-server.sh", o).unwrap();
+            w.write_all(b"#!/bin/sh").unwrap();
+            w.finish().unwrap();
+        }
+        extract(&a, &d).unwrap();
+        assert_eq!(std::fs::read(d.join("sd-server")).unwrap(), b"srv");
+        assert!(d.join("libggml-base.so.0.27.0").is_file());
+        assert!(d.join("start-server.sh").is_file());
+        assert!(!d.join("build").exists());
+        #[cfg(unix)]
+        assert_eq!(std::fs::read(d.join("libggml-base.so.0")).unwrap(), b"lib");
         let _ = std::fs::remove_dir_all(&d);
     }
 }
