@@ -124,6 +124,13 @@ stable-diffusion.cpp가 같은 태그(`master-1052-f5df5f8`)로 배포하는 **�
 커널 필요). 이 경우 Q4_K_M을 사용하고 해당 선택지를 숨깁니다. ⚡ 빠른 모드와 모든 생성 모드는 그대로 사용할 수 있으며, 사진 설명
 엔진은 원래 Vulkan 빌드라 AMD 드라이버에서도 동작합니다.
 
+**내장 Radeon (APU).** BIOS가 GPU에 작은 전용 메모리(2GB 이하, 흔히 512MB)만 주는 APU는 실제로는 시스템 RAM을 씁니다. Linux에서는
+GTT(`mem_info_gtt_total`), Windows에서는 공유 GPU 메모리(RAM의 절반)가 실제 GPU 메모리이므로, 앱은 전용 메모리 대신 이 값으로 판단해
+4GB 저VRAM 모드로 잘못 들어가지 않습니다. 또 GPU 메모리와 RAM이 같은 메모리이므로 가중치를 RAM 사본과 VRAM 작업분으로 두 번 두지 않고
+**GPU 장치에 한 벌만** 둡니다. 이미지 모델은 들어가면 항상 GPU에, 텍스트 인코더는 여유 RAM이 충분할 때만 GPU에 두고 아니면 디스크에서
+읽습니다(새 프롬프트마다 몇 초 추가). 전용 메모리를 크게 잡은 경우(Ryzen AI Max를 16GB 이상으로 설정)는 일반 VRAM으로 취급합니다.
+소프트웨어 Vulkan 드라이버(Mesa llvmpipe/lavapipe)는 GPU로 선택하지 않습니다.
+
 **검증 현황.** 투명하게 밝히면, **실제 AMD 하드웨어에서는 아직 한 번도 실행해 보지 않았습니다.** 개발 PC에는 RTX 3060 Ti만 있습니다.
 
 | 검증 완료 | 환경 |
@@ -133,12 +140,14 @@ stable-diffusion.cpp가 같은 태그(`master-1052-f5df5f8`)로 배포하는 **�
 | AMD zip 4종의 구성·의존성(Windows는 HIP DLL 포함, Linux ROCm은 시스템 ROCm 7 링크, Linux Vulkan은 glibc 2.43 필요) | 배포 아카이브 직접 분석 |
 | **앱에서 Vulkan 엔진 경로 전체 동작**: 장치 `Vulkan0` 인식, Q4_K_M 1024×1024 21.5초(새 프롬프트)/19.1초(반복), ⚡ 빠른 모드 15.1–15.8초. 최초 실행 예열 83초(셰이더 컴파일), 이후 22초 | Windows, 업스트림 Vulkan zip을 **RTX 3060 Ti**에서 실행(AMD가 아닌 NVIDIA Vulkan 드라이버) |
 | 로컬 미러로 Vulkan 엔진 최초 설치: 목록에 CUDA 런타임 없음, `runtime\vulkan\`에 압축 해제, 설치 화면의 GPU 안내·다운로드 실패 표시 | Windows |
+| APU 배치(가중치 `Vulkan0`, 텍스트 인코더 디스크, `--max-vram 0`)를 엔진이 받아들이고 정상 생성, 공유 메모리 8GB를 가정해 실행 | Windows, Vulkan zip을 RTX 3060 Ti에서 실행 |
 
 | 미검증 | 이유 |
 |---|---|
 | AMD Radeon에서의 실제 생성(ROCm·Vulkan 모두), 속도와 VRAM 동작 | AMD GPU 없음 |
 | Windows ROCm 빌드와 Adrenalin 드라이버 버전의 호환성, RX 6000/7000/9000 이름 기반 자동 선택 기준 | AMD 하드웨어 필요 |
 | 실제 ROCm 7이 설치된 Linux의 ROCm 엔진, Ubuntu 26.04에서의 Linux Vulkan 엔진 | AMD 하드웨어 / 26.04 환경 필요 |
+| 실제 APU(GTT 공유 메모리)에서의 속도와 메모리 동작 | APU 필요 |
 
 선택한 엔진이 GPU를 찾지 못하면 앱이 이를 알리고 설정 → GPU에서 다른 방식(예: ROCm 대신 Vulkan)을 고르도록 안내합니다.
 Radeon 사용자분들의 결과 공유(카드, 드라이버, 엔진 종류, 장당 시간 또는 엔진 로그)를 환영합니다.

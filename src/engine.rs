@@ -310,6 +310,10 @@ impl Worker {
         // The AMD builds (ROCm, Vulkan) name their devices differently (ROCm0, Vulkan0),
         // so the device comes from the engine's own list; CUDA keeps its tested CUDA0.
         let backend = s.backend();
+        // APU: the GPU's memory is system RAM, so a RAM copy of the weights plus the
+        // `--max-vram` working set would hold them twice. Weights then live on the GPU
+        // device itself, once.
+        let unified = crate::config::unified_memory();
         if !user_placement {
             let device = if backend == GpuBackend::Cuda {
                 "CUDA0".to_owned()
@@ -337,15 +341,29 @@ impl Worker {
             }
             let (total, available) = (crate::config::system_ram_bytes(), crate::config::available_ram_bytes());
             let in_ram = weights_fit_in_ram(total, available, weights);
-            if !in_ram && s.variant != ModelVariant::Int8 {
+            if unified {
+                let shared = crate::config::gpu_vram_bytes().unwrap_or(0);
+                let image_weights = size(&s.active_diffusion()) + size(&s.vae);
+                let (te, diffusion) = unified_placement(&device, shared, in_ram, weights, image_weights);
                 self.emit(EngineEvent::Log(tf!(
-                    "여유 RAM {:.1}GB: 텍스트 인코더를 디스크에서 읽습니다 (새 프롬프트마다 몇 초 더, RAM 부족으로 멈추지 않음)",
-                    "{:.1} GB RAM free: the text encoder is read from disk (a few seconds more per new prompt, no stalls from low RAM)",
-                    available.or(total).unwrap_or(0) as f64 / (1u64 << 30) as f64
+                    "통합 메모리 GPU (공유 {:.1}GB): 가중치를 GPU 메모리에 한 벌만 둡니다 (이미지 모델 {}, 텍스트 인코더 {})",
+                    "Unified-memory GPU ({:.1} GB shared): weights are kept once, in GPU memory (image model {}, text encoder {})",
+                    shared as f64 / (1u64 << 30) as f64,
+                    diffusion,
+                    te
                 )));
+                cmd.arg("--params-backend").arg(format!("diffusion={diffusion},te={te},vae={device}"));
+            } else {
+                if !in_ram && s.variant != ModelVariant::Int8 {
+                    self.emit(EngineEvent::Log(tf!(
+                        "여유 RAM {:.1}GB: 텍스트 인코더를 디스크에서 읽습니다 (새 프롬프트마다 몇 초 더, RAM 부족으로 멈추지 않음)",
+                        "{:.1} GB RAM free: the text encoder is read from disk (a few seconds more per new prompt, no stalls from low RAM)",
+                        available.or(total).unwrap_or(0) as f64 / (1u64 << 30) as f64
+                    )));
+                }
+                let te = if s.variant == ModelVariant::Int8 || !in_ram { "disk" } else { "cpu" };
+                cmd.arg("--params-backend").arg(format!("diffusion=cpu,te={te},vae=cpu"));
             }
-            let te = if s.variant == ModelVariant::Int8 || !in_ram { "disk" } else { "cpu" };
-            cmd.arg("--params-backend").arg(format!("diffusion=cpu,te={te},vae=cpu"));
         }
         // 4 GB cards: a 3 GiB budget leaves room for the desktop and driver, and the VAE
         // decodes in tiles (its 1024² decode is the biggest single VRAM spike). Measured on
@@ -353,7 +371,7 @@ impl Worker {
         // more memory keep the settings measured on 8 GB cards.
         let vram = crate::config::gpu_vram_bytes();
         let low_vram = crate::config::low_vram(vram);
-        if low_vram {
+        if low_vram && !unified {
             self.emit(EngineEvent::Log(tf!(
                 "VRAM {:.1}GB 그래픽카드: 저VRAM 모드 (VRAM 한도 3GB, VAE 타일링)",
                 "{:.1} GB VRAM card: low-VRAM mode (3 GB VRAM budget, VAE tiling)",
@@ -366,7 +384,15 @@ impl Worker {
             // Card memory minus 2 GiB for the desktop and driver, at most 6: 8 GB and larger
             // cards keep 6 (as measured), 6 GB cards (GTX 1660 Ti, RTX 2060, laptop 3060/4050)
             // get 4 instead of filling the whole card, 4 GB cards 3.
-            let budget = if low_vram { 3 } else { crate::config::vram_budget_gib(vram) };
+            // Unified memory: 0 = the engine works with the memory free at the time, since a
+            // fixed budget there is just more of the same RAM held back.
+            let budget = if unified {
+                0
+            } else if low_vram {
+                3
+            } else {
+                crate::config::vram_budget_gib(vram)
+            };
             cmd.arg("--max-vram").arg(budget.to_string());
         }
         // Self-test only (QIS_SHOT_DIR): QIS_LOWVRAM_TILE=off|<size> to compare tilings.
@@ -1063,6 +1089,22 @@ fn weights_fit_in_ram(total: Option<u64>, available: Option<u64>, weights: u64) 
     total.is_none_or(|t| t >= LOW_RAM_BYTES) && available.is_none_or(|a| a >= weights + RAM_HEADROOM)
 }
 
+/// Where an APU keeps the text encoder and the image model: on the GPU `device` when all
+/// weights fit in its shared memory with 2 GiB to spare for compute buffers and in the RAM
+/// free now (`in_ram`: the same RAM). Otherwise the text encoder is read from disk (only a
+/// new prompt pays for it). The image model stays on the GPU whenever it fits in the shared
+/// memory, even with little RAM free: any other place but disk takes the same RAM or more,
+/// and from disk it is re-read for every image (+8 s per image measured on Vulkan).
+fn unified_placement<'a>(device: &'a str, shared: u64, in_ram: bool, weights: u64, image_weights: u64) -> (&'a str, &'a str) {
+    if in_ram && weights + RAM_HEADROOM <= shared {
+        (device, device)
+    } else if image_weights + RAM_HEADROOM <= shared {
+        ("disk", device)
+    } else {
+        ("disk", "disk")
+    }
+}
+
 /// Generic scene text used when the user gave none (the fallback path needs a scene).
 pub const OUTPAINT_DEFAULT: &str = "같은 공간이 넓게 보이는 한 장의 사진, 같은 배경, 같은 조명과 색감, 선명한 디테일";
 /// What the English UI shows for it; sent to the model as the tested Korean one.
@@ -1526,6 +1568,19 @@ mod ram_tests {
         assert!(!weights_fit_in_ram(Some(8 * GB), Some(7 * GB), 1));
         // Unknown figures keep the old behaviour.
         assert!(weights_fit_in_ram(None, None, weights));
+    }
+
+    #[test]
+    fn apu_keeps_one_copy_on_the_gpu() {
+        use super::unified_placement;
+        let (weights, image) = (10 * GB, 5 * GB);
+        // 12 GiB GTT on a 16 GB box with plenty free: everything on the GPU.
+        assert_eq!(unified_placement("Vulkan0", 12 * GB, true, weights, image), ("Vulkan0", "Vulkan0"));
+        // Little RAM free, or shared memory short of all weights: the text encoder from disk.
+        assert_eq!(unified_placement("Vulkan0", 12 * GB, false, weights, image), ("disk", "Vulkan0"));
+        assert_eq!(unified_placement("Vulkan0", 8 * GB, true, weights, image), ("disk", "Vulkan0"));
+        // Not even the image model fits the shared memory: both from disk.
+        assert_eq!(unified_placement("Vulkan0", 6 * GB, false, weights, image), ("disk", "disk"));
     }
 }
 

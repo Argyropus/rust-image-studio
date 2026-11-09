@@ -131,10 +131,39 @@ pub struct GpuInfo {
     /// Marketing name on Windows ("AMD Radeon RX 7800 XT"); on Linux the AMD target
     /// ("AMD Radeon (gfx1101)") or empty.
     pub name: String,
+    /// Memory the GPU can use: its VRAM, or for a unified-memory GPU the shared system RAM.
     pub vram_bytes: Option<u64>,
     /// The ROCm engine build targets this GPU and, on Linux, the ROCm libraries it links
     /// against are installed.
     pub rocm_ok: bool,
+    /// An integrated Radeon (APU) whose memory is system RAM: only a small carve-out
+    /// (BIOS "UMA frame buffer", often 512 MiB) is dedicated, and `vram_bytes` is the shared
+    /// memory instead (Linux GTT, Windows half of RAM).
+    pub unified: bool,
+}
+
+/// Largest BIOS carve-out still taken for an APU's whole memory. A larger one (Ryzen AI Max
+/// set to 16 GB or more) is separate from the RAM the system sees, so it is treated as VRAM.
+pub const APU_CARVEOUT_MAX: u64 = 2 << 30;
+
+/// Whether a GPU with `dedicated` VRAM and `shared` GPU-addressable RAM works from system
+/// RAM: integrated, a small carve-out, and at least 4 GiB of shared memory beyond it.
+pub fn is_unified(integrated: bool, dedicated: Option<u64>, shared: Option<u64>) -> bool {
+    let d = dedicated.unwrap_or(0);
+    integrated && d <= APU_CARVEOUT_MAX && shared.is_some_and(|s| s >= 4 << 30 && s > d)
+}
+
+/// Linux targets of AMD APUs (Raven/Picasso/Renoir/Cezanne, Cyan Skillfish, Van Gogh,
+/// Rembrandt, Raphael, Mendocino, Phoenix, Strix and Strix Halo).
+#[cfg_attr(windows, allow(dead_code))]
+const APU_TARGETS: [&str; 13] =
+    ["gfx902", "gfx909", "gfx90c", "gfx1013", "gfx1033", "gfx1035", "gfx1036", "gfx1037", "gfx1103", "gfx1150", "gfx1151", "gfx1152", "gfx1153"];
+
+/// Windows names integrated Radeons "… Graphics" ("AMD Radeon(TM) Graphics", "AMD Radeon
+/// 780M Graphics", "Radeon RX Vega 11 Graphics"); add-in cards don't carry the word.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn integrated_radeon_name(name: &str) -> bool {
+    name.to_ascii_lowercase().contains("graphics")
 }
 
 /// The graphics card, detected once per run. NVIDIA wins when its driver is present
@@ -143,11 +172,13 @@ pub fn detect_gpu() -> &'static GpuInfo {
     static GPU: std::sync::OnceLock<GpuInfo> = std::sync::OnceLock::new();
     GPU.get_or_init(|| {
         let adapters = probe_adapters();
+        // A card with its own VRAM beats an APU's shared memory, however large.
         let best = |vendor: GpuVendor| {
-            adapters.iter().filter(|a| a.vendor == vendor).max_by_key(|a| a.vram_bytes.unwrap_or(0)).cloned()
+            adapters.iter().filter(|a| a.vendor == vendor).max_by_key(|a| (!a.unified, a.vram_bytes.unwrap_or(0))).cloned()
         };
         if nvidia_driver_present() {
-            let mut g = best(GpuVendor::Nvidia).unwrap_or(GpuInfo { vendor: GpuVendor::Nvidia, name: String::new(), vram_bytes: None, rocm_ok: false });
+            let mut g = best(GpuVendor::Nvidia)
+                .unwrap_or(GpuInfo { vendor: GpuVendor::Nvidia, name: String::new(), vram_bytes: None, rocm_ok: false, unified: false });
             // Linux exposes neither the name nor the VRAM size of an NVIDIA card in /sys:
             // ask the driver's tool instead.
             if g.vram_bytes.is_none() || g.name.is_empty() {
@@ -162,7 +193,7 @@ pub fn detect_gpu() -> &'static GpuInfo {
         }
         best(GpuVendor::Amd)
             .or_else(|| best(GpuVendor::Other))
-            .unwrap_or(GpuInfo { vendor: GpuVendor::Unknown, name: String::new(), vram_bytes: None, rocm_ok: false })
+            .unwrap_or(GpuInfo { vendor: GpuVendor::Unknown, name: String::new(), vram_bytes: None, rocm_ok: false, unified: false })
     })
 }
 
@@ -243,7 +274,11 @@ fn probe_adapters() -> Vec<GpuInfo> {
         let name = reg_string(&key, "DriverDesc").unwrap_or_default();
         let vram_bytes = reg_u64(&key, "HardwareInformation.qwMemorySize").or_else(|| reg_u64(&key, "HardwareInformation.MemorySize"));
         let rocm_ok = vendor == GpuVendor::Amd && rocm_windows_supported(&name);
-        out.push(GpuInfo { vendor, name, vram_bytes, rocm_ok });
+        // Windows lets a GPU borrow up to half of RAM ("shared GPU memory").
+        let shared = total_ram_bytes().map(|r| r / 2);
+        let unified = vendor == GpuVendor::Amd && is_unified(integrated_radeon_name(&name), vram_bytes, shared);
+        let vram_bytes = if unified { shared } else { vram_bytes };
+        out.push(GpuInfo { vendor, name, vram_bytes, rocm_ok, unified });
     }
     out
 }
@@ -314,10 +349,16 @@ fn probe_adapters() -> Vec<GpuInfo> {
         else {
             continue;
         };
-        let vram_bytes = read(&dev.join("mem_info_vram_total")).and_then(|v| v.parse().ok());
+        let vram_bytes: Option<u64> = read(&dev.join("mem_info_vram_total")).and_then(|v| v.parse().ok());
         let amd = vendor == GpuVendor::Amd;
         let label = if amd { gfx.first().map(|g| format!("AMD Radeon ({g})")).unwrap_or_else(|| "AMD Radeon".into()) } else { String::new() };
-        out.push(GpuInfo { vendor, name: label, vram_bytes, rocm_ok: amd && rocm_ok });
+        // An APU's VRAM file holds only the BIOS carve-out; the GPU really works from GTT
+        // (system RAM). Integrated: an APU target, or a carve-out of 1 GiB or less.
+        let gtt: Option<u64> = read(&dev.join("mem_info_gtt_total")).and_then(|v| v.parse().ok());
+        let integrated = gfx.iter().any(|g| APU_TARGETS.contains(&g.as_str())) || vram_bytes.is_some_and(|v| v <= 1 << 30);
+        let unified = amd && is_unified(integrated, vram_bytes, gtt);
+        let vram_bytes = if unified { gtt } else { vram_bytes };
+        out.push(GpuInfo { vendor, name: label, vram_bytes, rocm_ok: amd && rocm_ok, unified });
     }
     out
 }
@@ -328,11 +369,18 @@ fn probe_adapters() -> Vec<GpuInfo> {
 }
 
 /// The device to run on from `sd-server --list-devices` output ("name<TAB>description"
-/// per line): the first one of `backend`, else the first that is not the CPU.
+/// per line): the first one of `backend`, else the first that is not the CPU. Software
+/// Vulkan drivers (Mesa's llvmpipe/lavapipe, SwiftShader) run on the CPU and are skipped.
 pub fn pick_device(list: &str, backend: GpuBackend) -> Option<String> {
+    let software = |desc: &str| {
+        let d = desc.to_ascii_lowercase();
+        ["llvmpipe", "lavapipe", "swiftshader"].iter().any(|s| d.contains(s))
+    };
     let names: Vec<&str> = list
         .lines()
-        .filter_map(|l| l.split_once('\t').map(|(n, _)| n.trim()))
+        .filter_map(|l| l.split_once('\t'))
+        .filter(|(_, desc)| !software(desc))
+        .map(|(n, _)| n.trim())
         .filter(|n| !n.is_empty() && !n.contains(' '))
         .collect();
     let prefix = backend.device_prefix();
@@ -398,6 +446,15 @@ pub fn gpu_vram_bytes() -> Option<u64> {
     detect_gpu().vram_bytes
 }
 
+/// The GPU works from system RAM (an APU, see `GpuInfo::unified`). Self-tests can pretend
+/// one (`QIS_FAKE_UNIFIED=1`, with `QIS_SHOT_DIR`; `QIS_FAKE_VRAM_GB` then sets its size).
+pub fn unified_memory() -> bool {
+    if std::env::var_os("QIS_SHOT_DIR").is_some() && std::env::var("QIS_FAKE_UNIFIED").is_ok_and(|v| v == "1") {
+        return true;
+    }
+    detect_gpu().unified
+}
+
 /// A 4 GB-class card (under 5 GiB): the engine then keeps a 3 GiB VRAM budget and decodes
 /// the image in tiles. Larger cards keep the settings measured on 8 GB cards.
 pub fn low_vram(vram_bytes: Option<u64>) -> bool {
@@ -439,16 +496,33 @@ mod gpu_tests {
     use super::*;
 
     fn amd(rocm_ok: bool) -> GpuInfo {
-        GpuInfo { vendor: GpuVendor::Amd, name: "AMD Radeon RX 7800 XT".into(), vram_bytes: Some(16 << 30), rocm_ok }
+        GpuInfo { vendor: GpuVendor::Amd, name: "AMD Radeon RX 7800 XT".into(), vram_bytes: Some(16 << 30), rocm_ok, unified: false }
+    }
+
+    #[test]
+    fn apu_detection() {
+        // The reported case: gfx1013 with a 512 MiB carve-out and 12 GiB GTT.
+        assert!(is_unified(true, Some(512 << 20), Some(12 << 30)));
+        // A 2 GiB carve-out still counts; a Ryzen AI Max set to 32 GB of VRAM doesn't.
+        assert!(is_unified(true, Some(2 << 30), Some(16 << 30)));
+        assert!(!is_unified(true, Some(32 << 30), Some(48 << 30)));
+        // Add-in cards and APUs with too little shared memory keep the VRAM rules.
+        assert!(!is_unified(false, Some(8 << 30), Some(16 << 30)));
+        assert!(!is_unified(true, Some(512 << 20), Some(3 << 30)));
+        assert!(!is_unified(true, Some(512 << 20), None));
+        assert!(integrated_radeon_name("AMD Radeon(TM) Graphics"));
+        assert!(integrated_radeon_name("AMD Radeon 780M Graphics"));
+        assert!(!integrated_radeon_name("AMD Radeon RX 7800 XT"));
+        assert!(APU_TARGETS.contains(&gfx_name(100103).unwrap().as_str()));
     }
 
     #[test]
     fn auto_picks_cuda_then_rocm_then_vulkan() {
-        let nv = GpuInfo { vendor: GpuVendor::Nvidia, name: String::new(), vram_bytes: None, rocm_ok: false };
+        let nv = GpuInfo { vendor: GpuVendor::Nvidia, name: String::new(), vram_bytes: None, rocm_ok: false, unified: false };
         assert_eq!(resolve_backend(GpuBackend::Auto, &nv), GpuBackend::Cuda);
         assert_eq!(resolve_backend(GpuBackend::Auto, &amd(true)), GpuBackend::Rocm);
         assert_eq!(resolve_backend(GpuBackend::Auto, &amd(false)), GpuBackend::Vulkan);
-        let none = GpuInfo { vendor: GpuVendor::Unknown, name: String::new(), vram_bytes: None, rocm_ok: false };
+        let none = GpuInfo { vendor: GpuVendor::Unknown, name: String::new(), vram_bytes: None, rocm_ok: false, unified: false };
         assert_eq!(resolve_backend(GpuBackend::Auto, &none), GpuBackend::Cuda);
         // A choice in Settings always wins.
         assert_eq!(resolve_backend(GpuBackend::Vulkan, &nv), GpuBackend::Vulkan);
@@ -488,6 +562,10 @@ mod gpu_tests {
         // The ROCm build without a usable device lists only the CPU.
         assert_eq!(pick_device("CPU\tAMD Ryzen 7 5700X\n", GpuBackend::Rocm), None);
         assert_eq!(pick_device("", GpuBackend::Vulkan), None);
+        // Mesa's CPU rasteriser is never picked, wherever it is listed.
+        let apu = "Vulkan0\tllvmpipe (LLVM 19.1.7, 256 bits)\nVulkan1\tAMD Radeon Graphics (RADV GFX1013)\nCPU\tx\n";
+        assert_eq!(pick_device(apu, GpuBackend::Vulkan).as_deref(), Some("Vulkan1"));
+        assert_eq!(pick_device("Vulkan0\tllvmpipe (LLVM 19.1.7, 256 bits)\nCPU\tx\n", GpuBackend::Vulkan), None);
     }
 
     #[test]

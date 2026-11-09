@@ -3925,7 +3925,11 @@ impl StudioApp {
             .show(ctx, |ui| {
                 section(ui, "GPU");
                 let gpu = crate::config::detect_gpu();
-                let detected = if gpu.name.is_empty() { t!("감지된 그래픽카드 없음", "No graphics card detected").to_owned() } else { gpu.name.clone() };
+                let mut detected = if gpu.name.is_empty() { t!("감지된 그래픽카드 없음", "No graphics card detected").to_owned() } else { gpu.name.clone() };
+                if gpu.unified {
+                    let gb = gpu.vram_bytes.unwrap_or(0) as f64 / (1u64 << 30) as f64;
+                    detected += &tf!(" (내장 그래픽, 공유 메모리 {:.0}GB)", " (integrated, {:.0} GB shared memory)", gb);
+                }
                 ui.horizontal_wrapped(|ui| {
                     for b in GpuBackend::ALL {
                         let label = if b == GpuBackend::Auto {

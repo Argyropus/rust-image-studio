@@ -169,6 +169,14 @@ NVIDIA is used: weights mirrored in RAM, a 6 GB VRAM budget (less on cards under
 ⚡ Fast mode and every generation mode stay available. The photo describer was already a Vulkan build and runs on AMD
 drivers too.
 
+**Integrated Radeon (APU).** An APU whose BIOS gives the GPU only a small carve-out (2 GB or less, often 512 MB) works
+from system RAM: on Linux its real GPU memory is the GTT (`mem_info_gtt_total`), on Windows the shared GPU memory (half of
+RAM). The app sizes everything by that memory instead of the carve-out, so such a PC is no longer put in the 4 GB low-VRAM
+mode. Since GPU memory and RAM are the same chips there, the weights are kept **once, on the GPU device**, instead of a RAM
+copy plus a VRAM working set: the image model stays on the GPU whenever it fits, the text encoder too when the RAM free
+allows, otherwise it is read from disk (a few seconds more per new prompt). A larger carve-out (a Ryzen AI Max set to 16 GB or
+more) is treated as normal VRAM. Software Vulkan drivers (Mesa's llvmpipe/lavapipe) are never picked as the GPU.
+
 **Validation status.** For transparency: **none of this has been run on AMD hardware yet**. The development PC has an
 RTX 3060 Ti only.
 
@@ -179,12 +187,14 @@ RTX 3060 Ti only.
 | Archive contents and dependencies of the four AMD zips (HIP DLLs bundled on Windows; Linux ROCm links system ROCm 7; Linux Vulkan glibc floor 2.43) | read from the published archives |
 | **The Vulkan engine path end to end in the app**: device read as `Vulkan0`, Q4_K_M generation at 1024×1024 in 21.5 s (new prompt) / 19.1 s (repeat), ⚡ Fast mode 15.1–15.8 s; the first launch's warm-up took 83 s (shader compilation), later ones 22 s | Windows, upstream Vulkan zip on the **RTX 3060 Ti** (NVIDIA's Vulkan driver, not AMD's) |
 | First-run setup with the Vulkan engine from a local mirror: no CUDA runtime in the list, the zip unpacked into `runtime\vulkan\`, the GPU line and a failed download shown on the setup screen | Windows |
+| APU placement (weights on `Vulkan0`, text encoder from disk, `--max-vram 0`) accepted by the engine and generating correctly, with 8 GB of shared memory simulated | Windows, Vulkan zip on the RTX 3060 Ti |
 
 | Not yet verified | Reason |
 |---|---|
 | Any generation on an AMD Radeon, with either the ROCm or the Vulkan build, and its speed or VRAM behaviour | no AMD GPU available |
 | That the Windows ROCm build works with a given Adrenalin driver version, and the RX 6000/7000/9000 name heuristic for picking it | needs AMD hardware |
 | Linux ROCm with a real ROCm 7 install; the Linux Vulkan build on Ubuntu 26.04 | needs AMD hardware / a 26.04 system |
+| Speed and memory behaviour on a real APU (shared GTT memory) | needs an APU |
 
 If the chosen engine finds no GPU, the app says so and suggests another option in Settings → GPU (for example Vulkan instead
 of ROCm). Reports from Radeon owners (card, driver, which engine, seconds per image, or the engine log) are very welcome.
