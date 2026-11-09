@@ -2450,13 +2450,13 @@ impl StudioApp {
                     .color(TEXT_FAINT),
             );
             // Measured on the same picture and seeds: a guided pass took ~30 s on Q4 and
-            // ~19 s on the INT8 tensor-core model, with the same composition and detail.
+            // ~19 s on the INT8 ConvRot model, with the same composition and detail.
             if self.settings.variant == ModelVariant::Q4 && self.settings.int8_model.is_file() && self.settings.int8_supported() {
                 ui.horizontal_wrapped(|ui| {
-                    ui.label(RichText::new(t!("⚡ INT8 모델이면 확장이 약 35% 빨라집니다 (화질 동일).", "⚡ The INT8 model expands about 35% faster (same quality).")).size(12.0).color(ACCENT_HOVER));
+                    ui.label(RichText::new(t!("⚡ INT8 확장 속도는 GPU와 메모리 배치에 따라 달라집니다.", "⚡ INT8 expansion speed depends on the GPU and memory placement.")).size(12.0).color(ACCENT_HOVER));
                     if ui
                         .small_button(t!("INT8로 바꾸기", "Switch to INT8"))
-                        .on_hover_text(t!("엔진을 INT8 텐서코어 모델로 다시 시작합니다 (약 40초). 아래 '모델' 메뉴에서 언제든 되돌릴 수 있습니다.", "Restarts the engine with the INT8 tensor-core model (about 40 s). You can switch back anytime in the \'Model\' menu below."))
+                        .on_hover_text(t!("엔진을 INT8 ConvRot 모델로 다시 시작합니다 (약 40초). 아래 '모델' 메뉴에서 언제든 되돌릴 수 있습니다.", "Restarts the engine with the INT8 ConvRot model (about 40 s). You can switch back anytime in the \'Model\' menu below."))
                         .clicked()
                     {
                         let ctx = ui.ctx().clone();
@@ -3072,7 +3072,7 @@ impl StudioApp {
                             if self.settings.small_diffusion() { t!("표준 · Q3_K_S (저사양 PC용)", "Standard · Q3_K_S (for low-end PCs)") } else { t!("표준 · Q4_K_M", "Standard · Q4_K_M") },
                             t!("RAM을 적게 씀 · 장당 약 19초", "Less RAM · about 19 s per image"),
                         ),
-                        (ModelVariant::Int8, t!("고화질·고속 · INT8 텐서코어", "High quality · fast · INT8 tensor core"), t!("반복 생성 장당 약 12.5초 · 원본에 더 가까운 화질", "Repeat generations about 12.5 s each · closer to the original quality")),
+                        (ModelVariant::Int8, t!("고화질 · INT8 ConvRot", "High quality · INT8 ConvRot"), t!("원본에 더 가까운 화질 · 속도는 GPU와 메모리 배치에 따라 달라집니다", "Closer to the original quality · speed depends on the GPU and memory placement")),
                     ] {
                         let mark = if v == current { "✔ " } else { "    " };
                         let r = ui.add(
@@ -3953,7 +3953,7 @@ impl StudioApp {
                 section(ui, t!("생성 모델", "Generation model"));
                 let int8_ok = draft.int8_supported();
                 if !int8_ok {
-                    ui.label(RichText::new(t!("INT8 텐서코어 모델은 텐서코어가 있는 NVIDIA RTX 그래픽카드(CUDA 엔진)에서만 동작해 표준 Q4 모델을 씁니다.", "The INT8 tensor-core model only runs on NVIDIA RTX cards (CUDA engine), which have tensor cores, so the standard Q4 model is used.")).size(12.0).color(TEXT_DIM));
+                    ui.label(RichText::new(t!("INT8 ConvRot은 NVIDIA CUDA 또는 지원되는 AMD ROCm GPU(CDNA·RDNA3 이상)에서 선택할 수 있습니다. 현재 장치에서는 표준 Q4 모델을 씁니다.", "INT8 ConvRot is available on NVIDIA CUDA or supported AMD ROCm GPUs (CDNA and RDNA3+). The current device uses the standard Q4 model.")).size(12.0).color(TEXT_DIM));
                 }
                 ui.horizontal(|ui| {
                     let w = (ui.available_width() - 8.0) / 2.0;
@@ -3965,8 +3965,8 @@ impl StudioApp {
                         ),
                         (
                             ModelVariant::Int8,
-                            t!("고화질·고속 · INT8 텐서코어 (7.3GB)", "High quality · fast · INT8 tensor core (7.3 GB)"),
-                            t!("단계당 39% 빠르고 원본에 더 가깝습니다.\n같은 프롬프트 반복 시 장당 약 12초,\n프롬프트를 바꾸면 약 20초", "39% faster per step and closer to the original.\nAbout 12 s per image when repeating a prompt,\nabout 20 s with a new prompt"),
+                            t!("고화질 · INT8 ConvRot (7.3GB)", "High quality · INT8 ConvRot (7.3 GB)"),
+                            t!("CUDA 텐서코어 또는 AMD HIP의 INT8 연산을 사용합니다.\n속도와 메모리 사용량은 GPU와 모델에 따라 달라집니다.", "Uses CUDA tensor cores or AMD HIP INT8 math.\nSpeed and memory use depend on the GPU and model."),
                         ),
                     ] {
                         if variant == ModelVariant::Int8 && !int8_ok {
@@ -4594,8 +4594,8 @@ fn gpu_notice(ui: &mut Ui, settings: &Settings) {
     let name = if gpu.name.is_empty() { t!("알 수 없는 GPU", "unknown GPU").to_owned() } else { gpu.name.clone() };
     ui.label(
         RichText::new(tf!(
-            "그래픽카드: {} · 엔진: {} · AMD/Vulkan 지원은 실험 단계라 실제 AMD 하드웨어에서 아직 검증되지 않았습니다. INT8 텐서코어 모델은 NVIDIA 전용입니다.",
-            "Graphics card: {} · engine: {} · AMD/Vulkan support is experimental and not yet verified on real AMD hardware. The INT8 tensor-core model is NVIDIA-only.",
+            "그래픽카드: {} · 엔진: {} · AMD/Vulkan 지원은 실험 단계입니다. INT8 ConvRot은 NVIDIA CUDA 및 지원되는 AMD ROCm GPU에서 사용할 수 있습니다.",
+            "Graphics card: {} · engine: {} · AMD/Vulkan support is experimental. INT8 ConvRot is available on NVIDIA CUDA and supported AMD ROCm GPUs.",
             name,
             backend.label()
         ))

@@ -120,8 +120,8 @@ stable-diffusion.cpp가 같은 태그(`master-1052-f5df5f8`)로 배포하는 **�
 | 그 밖의 Linux AMD | Vulkan (업스트림이 Ubuntu 26.04에서 빌드: **glibc 2.43 이상** 필요) | 42MB |
 
 엔진이 쓸 장치 이름(`ROCm0`, `Vulkan0`)은 `sd-server --list-devices` 출력에서 읽으며, 메모리 배치는 NVIDIA와 동일합니다(가중치 RAM
-사본, VRAM 6GB 한도, 8GB 미만 카드는 더 낮게). CUDA가 아니면 **INT8 텐서코어 모델**은 쓸 수 없습니다(CUDA 빌드의 CUTLASS INT8
-커널 필요). 이 경우 Q4_K_M을 사용하고 해당 선택지를 숨깁니다. ⚡ 빠른 모드와 모든 생성 모드는 그대로 사용할 수 있으며, 사진 설명
+사본, VRAM 6GB 한도, 8GB 미만 카드는 더 낮게). **INT8 ConvRot 모델**은 NVIDIA CUDA와 CDNA·RDNA3·RDNA3.5·RDNA4 계열의 AMD ROCm에서 선택할 수 있습니다.
+이전 AMD GPU와 Vulkan에서는 Q4_K_M을 사용합니다. Vulkan INT8은 장치 기능 검증이 추가되기 전까지 선택지를 숨깁니다. ⚡ 빠른 모드와 모든 생성 모드는 그대로 사용할 수 있으며, 사진 설명
 엔진은 원래 Vulkan 빌드라 AMD 드라이버에서도 동작합니다.
 
 **내장 Radeon (APU).** BIOS가 GPU에 작은 전용 메모리(2GB 이하, 흔히 512MB)만 주는 APU는 실제로는 시스템 RAM을 씁니다. Linux에서는
