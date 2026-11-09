@@ -40,34 +40,10 @@ Engine and models are provisioned on first launch · full UI reference: **[menu 
 
 ## Highlights
 
-<table>
-<tr>
-<td width="25%" valign="top">
-
-### ⚡ Fast on 8 GB
-1024×1024 in **~10–19 s** on an RTX 3060 Ti 8 GB. A fixed 6 GB VRAM budget plus a resident, pre-warmed model keeps latency low, and an optional INT8 path uses the tensor cores. Cards with 4–6 GB get a smaller budget and tiled VAE decoding on their own ([table](#windows)).
-
-</td>
-<td width="25%" valign="top">
-
-### 📦 Zero setup
-A single 26 MB executable with no runtime dependencies. First launch provisions the engine, models and LoRAs (resumable). No Python, ComfyUI or node graphs.
-
-</td>
-<td width="25%" valign="top">
-
-### 🖼️ Outpainting
-Drag the edges to extend the canvas. Source pixels are recomposited at native resolution, large expansions run in multiple passes, and blank fills are detected and redrawn automatically.
-
-</td>
-<td width="25%" valign="top">
-
-### 🦀 Native Rust
-An immediate-mode GPU UI (egui) with no Electron or web view. It repaints only on state changes, and GPU jobs are scheduled one at a time to avoid VRAM contention.
-
-</td>
-</tr>
-</table>
+- **⚡ Fast on 8 GB**<br>1024×1024 in **~10–19 s** on an RTX 3060 Ti 8 GB. A fixed 6 GB VRAM budget plus a resident, pre-warmed model keeps latency low, and an optional INT8 path uses the tensor cores. Cards with 4–6 GB get a smaller budget and tiled VAE decoding on their own ([table](#windows)).
+- **📦 Zero setup**<br>A single 26 MB executable with no runtime dependencies. First launch provisions the engine, models and LoRAs (resumable). No Python, ComfyUI or node graphs.
+- **🖼️ Outpainting**<br>Drag the edges to extend the canvas. Source pixels are recomposited at native resolution, large expansions run in multiple passes, and blank fills are detected and redrawn automatically.
+- **🦀 Native Rust**<br>An immediate-mode GPU UI (egui) with no Electron or web view. It repaints only on state changes, and GPU jobs are scheduled one at a time to avoid VRAM contention.
 
 ## Built with Claude
 
@@ -93,68 +69,15 @@ Rust Image Studio originated as AKAN's in-house tool for product visuals and is 
 
 Every control, menu and option is documented in the **[menu guide](docs/GUIDE.md)**.
 
-<table>
-<tr>
-<td width="33%" valign="top">
-
-#### 🎨 Five modes
-**Text** · **Variation** (img2img with strength) · **Edit** (instructions + up to 3 reference images) · **Inpaint** (brush the area) · **Expand** (outpainting). One shortcut each (Ctrl+1…5); the mode bar stays pinned while you scroll.
-
-</td>
-<td width="33%" valign="top">
-
-#### ↔️ Smart Expand
-A live preview with draggable sides and corners, quick presets (16:9, 9:16, 1:1, 4:3, zoom out) and per-side sliders. Equal passes are planned automatically and the source stays pixel-exact. The prompt is optional: the app writes one for you.
-
-</td>
-<td width="33%" valign="top">
-
-#### 🧠 Auto scene prompts
-Images made by the app carry their prompt in PNG metadata. For any other photo, a local vision model (Qwen3-VL via llama.cpp, on the GPU) describes the scene in ~20 s. It runs only when the image engine is idle.
-
-</td>
-</tr>
-<tr>
-<td valign="top">
-
-#### 🧩 LoRA card
-One-click downloads of tested LoRAs: **Lightning 4-step**, **Edit consistency** and **Multiple angles**, the last with a 12-direction × 4-height camera dial that writes the prompt for you. Incompatible combinations switch each other off.
-
-</td>
-<td valign="top">
-
-#### 🗂️ Smart gallery
-Prompt search, small and large grids, and a full-screen viewer with zoom and pan. Every PNG embeds its seed, size, mode and prompt, so dropping it back in restores the exact settings. Deletions go to the Recycle Bin / Trash.
-
-</td>
-<td valign="top">
-
-#### ✍️ Text in images
-Renders legible signage text, including Hangul. A one-click text template, validated prompt tips and per-mode examples are built in.
-
-</td>
-</tr>
-<tr>
-<td valign="top">
-
-#### 🧵 Workflow essentials
-A job queue that accepts work while generating, batch prompts (one per line), multi-image runs, fixed or random seeds, clipboard paste and copy, drag and drop anywhere, and Save as PNG/WebP/JPG.
-
-</td>
-<td valign="top">
-
-#### 🌏 Bilingual UI
-Korean and English, switchable live from the top bar. Prompts perform equally well in either language.
-
-</td>
-<td valign="top">
-
-#### 🛡️ Responsible by default
-A built-in guard refuses prompts that sexualize minors. Everything else stays on your machine, with no telemetry and no uploads.
-
-</td>
-</tr>
-</table>
+- **🎨 Five modes**<br>**Text** · **Variation** (img2img with strength) · **Edit** (instructions + up to 3 reference images) · **Inpaint** (brush the area) · **Expand** (outpainting). One shortcut each (Ctrl+1…5); the mode bar stays pinned while you scroll.
+- **↔️ Smart Expand**<br>A live preview with draggable sides and corners, quick presets (16:9, 9:16, 1:1, 4:3, zoom out) and per-side sliders. Equal passes are planned automatically and the source stays pixel-exact. The prompt is optional: the app writes one for you.
+- **🧠 Auto scene prompts**<br>Images made by the app carry their prompt in PNG metadata. For any other photo, a local vision model (Qwen3-VL via llama.cpp, on the GPU) describes the scene in ~20 s. It runs only when the image engine is idle.
+- **🧩 LoRA card**<br>One-click downloads of tested LoRAs: **Lightning 4-step**, **Edit consistency** and **Multiple angles**, the last with a 12-direction × 4-height camera dial that writes the prompt for you. Incompatible combinations switch each other off.
+- **🗂️ Smart gallery**<br>Prompt search, small and large grids, and a full-screen viewer with zoom and pan. Every PNG embeds its seed, size, mode and prompt, so dropping it back in restores the exact settings. Deletions go to the Recycle Bin / Trash.
+- **✍️ Text in images**<br>Renders legible signage text, including Hangul. A one-click text template, validated prompt tips and per-mode examples are built in.
+- **🧵 Workflow essentials**<br>A job queue that accepts work while generating, batch prompts (one per line), multi-image runs, fixed or random seeds, clipboard paste and copy, drag and drop anywhere, and Save as PNG/WebP/JPG.
+- **🌏 Bilingual UI**<br>Korean and English, switchable live from the top bar. Prompts perform equally well in either language.
+- **🛡️ Responsible by default**<br>A built-in guard refuses prompts that sexualize minors. Everything else stays on your machine, with no telemetry and no uploads.
 
 <p align="center"><img src="docs/showcase-expand-en.webp" alt="Smart Expand: drag the edges, get a wider photo with the original untouched" width="100%"></p>
 
