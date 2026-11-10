@@ -2522,7 +2522,13 @@ impl StudioApp {
             // ~19 s on the INT8 ConvRot model, with the same composition and detail.
             if self.settings.variant == ModelVariant::Q4 && self.settings.int8_model.is_file() && self.settings.int8_supported() {
                 ui.horizontal_wrapped(|ui| {
-                    ui.label(RichText::new(t!("⚡ INT8 확장 속도는 GPU와 메모리 배치에 따라 달라집니다.", "⚡ INT8 expansion speed depends on the GPU and memory placement.")).size(12.0).color(ACCENT_HOVER));
+                    // The 35% is the NVIDIA measurement above; nothing was measured on AMD.
+                    let hint = if self.settings.backend() == GpuBackend::Cuda {
+                        t!("⚡ INT8 모델이면 확장이 약 35% 빨라집니다 (화질 동일).", "⚡ The INT8 model expands about 35% faster (same quality).")
+                    } else {
+                        t!("⚡ INT8 확장 속도는 GPU와 메모리 배치에 따라 달라집니다.", "⚡ INT8 expansion speed depends on the GPU and memory placement.")
+                    };
+                    ui.label(RichText::new(hint).size(12.0).color(ACCENT_HOVER));
                     if ui
                         .small_button(t!("INT8로 바꾸기", "Switch to INT8"))
                         .on_hover_text(t!("엔진을 INT8 ConvRot 모델로 다시 시작합니다 (약 40초). 아래 '모델' 메뉴에서 언제든 되돌릴 수 있습니다.", "Restarts the engine with the INT8 ConvRot model (about 40 s). You can switch back anytime in the \'Model\' menu below."))
@@ -3141,7 +3147,12 @@ impl StudioApp {
                             if self.settings.small_diffusion() { t!("표준 · Q3_K_S (저사양 PC용)", "Standard · Q3_K_S (for low-end PCs)") } else { t!("표준 · Q4_K_M", "Standard · Q4_K_M") },
                             t!("RAM을 적게 씀 · 장당 약 19초", "Less RAM · about 19 s per image"),
                         ),
-                        (ModelVariant::Int8, t!("고화질 · INT8 ConvRot", "High quality · INT8 ConvRot"), t!("원본에 더 가까운 화질 · 속도는 GPU와 메모리 배치에 따라 달라집니다", "Closer to the original quality · speed depends on the GPU and memory placement")),
+                        // The speed figures were measured on NVIDIA (RTX 3060 Ti); AMD gets none.
+                        if self.settings.backend() == GpuBackend::Cuda {
+                            (ModelVariant::Int8, t!("고화질·고속 · INT8 ConvRot", "High quality · fast · INT8 ConvRot"), t!("반복 생성 장당 약 12.5초 · 원본에 더 가까운 화질", "Repeat generations about 12.5 s each · closer to the original quality"))
+                        } else {
+                            (ModelVariant::Int8, t!("고화질 · INT8 ConvRot", "High quality · INT8 ConvRot"), t!("원본에 더 가까운 화질 · 속도는 GPU와 메모리 배치에 따라 달라집니다", "Closer to the original quality · speed depends on the GPU and memory placement"))
+                        },
                     ] {
                         let mark = if v == current { "✔ " } else { "    " };
                         let r = ui.add(
@@ -4032,11 +4043,20 @@ impl StudioApp {
                             if draft.small_diffusion() { t!("표준 · Q3_K_S (2.7GB, 저사양 PC용)", "Standard · Q3_K_S (2.7 GB, for low-end PCs)") } else { t!("표준 · Q4_K_M (4.2GB)", "Standard · Q4_K_M (4.2 GB)") },
                             t!("RAM을 적게 씁니다.\n장당 약 18초", "Uses less RAM.\nAbout 18 s per image"),
                         ),
-                        (
-                            ModelVariant::Int8,
-                            t!("고화질 · INT8 ConvRot (7.3GB)", "High quality · INT8 ConvRot (7.3 GB)"),
-                            t!("CUDA 텐서코어 또는 AMD HIP의 INT8 연산을 사용합니다.\n속도와 메모리 사용량은 GPU와 모델에 따라 달라집니다.", "Uses CUDA tensor cores or AMD HIP INT8 math.\nSpeed and memory use depend on the GPU and model."),
-                        ),
+                        // The speed figures were measured on NVIDIA (RTX 3060 Ti); AMD gets none.
+                        if draft.backend() == GpuBackend::Cuda {
+                            (
+                                ModelVariant::Int8,
+                                t!("고화질·고속 · INT8 ConvRot (7.3GB)", "High quality · fast · INT8 ConvRot (7.3 GB)"),
+                                t!("단계당 39% 빠르고 원본에 더 가깝습니다.\n같은 프롬프트 반복 시 장당 약 12초,\n프롬프트를 바꾸면 약 20초", "39% faster per step and closer to the original.\nAbout 12 s per image when repeating a prompt,\nabout 20 s with a new prompt"),
+                            )
+                        } else {
+                            (
+                                ModelVariant::Int8,
+                                t!("고화질 · INT8 ConvRot (7.3GB)", "High quality · INT8 ConvRot (7.3 GB)"),
+                                t!("AMD HIP의 INT8 연산을 사용합니다.\n속도와 메모리 사용량은 GPU와 모델에 따라 달라집니다.", "Uses AMD HIP INT8 math.\nSpeed and memory use depend on the GPU and model."),
+                            )
+                        },
                     ] {
                         if variant == ModelVariant::Int8 && !int8_ok {
                             continue;
