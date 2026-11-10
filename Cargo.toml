@@ -1,6 +1,6 @@
 [package]
 name = "rust-image-studio"
-version = "1.2.5"
+version = "1.2.6"
 edition = "2024"
 description = "Local Qwen-Image-2.1 Turbo image generation app for Windows and Linux (egui + stable-diffusion.cpp)"
 license = "MIT"
@@ -26,6 +26,10 @@ zip = { version = "9.4.1", default-features = false, features = ["deflate"] }
 # The Linux engine/captioner archives are .tar.gz.
 flate2 = "1"
 tar = { version = "0.4", default-features = false }
+
+[build-dependencies]
+# Embeds assets/icon.ico in the Windows .exe (build.rs).
+winresource = "0.1"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_System_JobObjects", "Win32_Foundation", "Win32_Security", "Win32_System_Threading", "Win32_Storage_FileSystem", "Win32_System_SystemInformation", "Win32_System_Registry"] }

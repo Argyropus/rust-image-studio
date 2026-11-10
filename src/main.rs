@@ -38,13 +38,23 @@ fn carry_over_settings() {
     }
 }
 
+/// The app logo (docs/logo.svg rendered to 256×256) for the title bar and taskbar.
+fn window_icon() -> egui::IconData {
+    let img = image::load_from_memory_with_format(include_bytes!("../assets/icon.png"), image::ImageFormat::Png)
+        .expect("bundled icon.png decodes")
+        .to_rgba8();
+    let (width, height) = img.dimensions();
+    egui::IconData { rgba: img.into_raw(), width, height }
+}
+
 fn main() -> eframe::Result {
     carry_over_settings();
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title(APP_NAME)
             .with_inner_size([1480.0, 920.0])
-            .with_min_inner_size([1100.0, 680.0]),
+            .with_min_inner_size([1100.0, 680.0])
+            .with_icon(std::sync::Arc::new(window_icon())),
         // Self-test windows must not overwrite (or inherit) the user's window geometry.
         persist_window: std::env::var_os("QIS_SHOT_DIR").is_none() || std::env::var_os("QIS_KEEP_WINDOW").is_some(),
         ..Default::default()
