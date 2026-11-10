@@ -14,10 +14,10 @@ pub const VAE_FILE: &str = "qwen_image_2.1_vae_bf16.safetensors";
 pub const VISION_FILE: &str = "mmproj-Qwen3-VL-8B-F16.gguf";
 pub const INT8_FILE: &str = "qwen_image_2.1_turbo_int8_convrot.safetensors";
 
-/// Optional faster/higher-fidelity diffusion weights (INT8 tensor-core GEMM on RTX 20+).
+/// Optional INT8 ConvRot diffusion weights (CUDA tensor cores or supported AMD HIP).
 pub const INT8_SOURCE: ModelSource = ModelSource {
-    label: "이미지 생성 모델 (Turbo INT8 ConvRot, 텐서코어)",
-    label_en: "Image model (Turbo INT8 ConvRot, tensor cores)",
+    label: "이미지 생성 모델 (Turbo INT8 ConvRot)",
+    label_en: "Image model (Turbo INT8 ConvRot)",
     file: INT8_FILE,
     url: "https://huggingface.co/Comfy-Org/Qwen-Image-2.1/resolve/main/diffusion_models/qwen_image_2.1_turbo_int8_convrot.safetensors",
     approx_bytes: 7_256_787_829,
@@ -227,6 +227,38 @@ pub fn rocm_windows_supported(name: &str) -> bool {
         })
     };
     series_after("rx ") || series_after("pro w") || ["8060s", "8050s", "8040s"].iter().any(|m| n.contains(m))
+}
+
+/// INT8 ConvRot GEMM is accelerated by HIP on CDNA and RDNA3/3.5/4.
+/// Windows exposes marketing names; Linux exposes a gfx target. Keep RDNA2 and
+/// unknown devices on Q4 instead of silently offering the CPU INT8 fallback.
+pub fn rocm_int8_supported(name: &str) -> bool {
+    let n = name.to_ascii_lowercase();
+    if n.split(|c: char| !c.is_ascii_alphanumeric()).any(|target| {
+        target.starts_with("gfx11") || target.starts_with("gfx12")
+            || matches!(target, "gfx908" | "gfx90a" | "gfx942" | "gfx950")
+    }) {
+        return true;
+    }
+    let series_after = |marker: &str| {
+        n.split(marker).skip(1).any(|rest| {
+            let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+            digits.len() == 4 && matches!(digits.as_bytes()[0], b'7' | b'9')
+        })
+    };
+    n.contains("radeon") && (series_after("rx ") || series_after("pro w")
+        || ["8060s", "8050s", "8040s", "740m", "760m", "780m", "840m", "860m", "880m", "890m"]
+            .iter().any(|model| n.contains(model)))
+}
+
+/// Whether the selected engine and detected device have an accelerated INT8 path.
+/// Vulkan needs a feature query before it can be offered safely here.
+pub fn native_int8_supported(backend: GpuBackend, gpu: &GpuInfo) -> bool {
+    match resolve_backend(backend, gpu) {
+        GpuBackend::Cuda => gpu.vendor == GpuVendor::Nvidia && has_tensor_cores(&gpu.name),
+        GpuBackend::Rocm => gpu.vendor == GpuVendor::Amd && rocm_int8_supported(&gpu.name),
+        _ => false,
+    }
 }
 
 /// GPU targets of the Linux ROCm build (from its release workflow).
@@ -537,6 +569,32 @@ mod gpu_tests {
         for no in ["AMD Radeon RX 580 2048SP", "AMD Radeon RX 5700 XT", "AMD Radeon(TM) 780M", "AMD Radeon(TM) Graphics", "NVIDIA GeForce RTX 3060 Ti", "Radeon RX Vega 56"] {
             assert!(!rocm_windows_supported(no), "{no}");
         }
+    }
+
+    #[test]
+    fn int8_backend_and_architecture_support() {
+        let gpu = |vendor, name: &str| GpuInfo {
+            vendor, name: name.to_owned(), vram_bytes: Some(24 << 30),
+            rocm_ok: true, unified: false,
+        };
+        for name in ["AMD Radeon RX 7900 XTX", "AMD Radeon RX 7800 XT",
+            "AMD Radeon RX 9070 XT", "AMD Radeon PRO W7800", "AMD Radeon 8060S Graphics",
+            "AMD Radeon 780M Graphics", "AMD Radeon (gfx1100)", "AMD Radeon (gfx1151)",
+            "AMD Radeon (gfx1201)", "AMD Instinct (gfx90a)"] {
+            let g = gpu(GpuVendor::Amd, name);
+            assert!(native_int8_supported(GpuBackend::Rocm, &g), "{name}");
+            assert!(native_int8_supported(GpuBackend::Auto, &g), "{name}");
+        }
+        for name in ["AMD Radeon RX 6700 XT", "AMD Radeon RX 5700 XT",
+            "AMD Radeon 680M Graphics", "AMD Radeon (gfx1030)", "AMD Radeon Graphics"] {
+            assert!(!native_int8_supported(GpuBackend::Rocm, &gpu(GpuVendor::Amd, name)), "{name}");
+        }
+        let rtx = gpu(GpuVendor::Nvidia, "NVIDIA GeForce RTX 3060 Ti");
+        assert!(native_int8_supported(GpuBackend::Cuda, &rtx));
+        assert!(!native_int8_supported(GpuBackend::Rocm, &rtx));
+        assert!(!native_int8_supported(GpuBackend::Cuda, &gpu(GpuVendor::Nvidia, "NVIDIA GeForce GTX 1660 Ti")));
+        assert!(!native_int8_supported(GpuBackend::Vulkan, &gpu(GpuVendor::Amd, "AMD Radeon RX 7900 XTX")));
+        assert!(!native_int8_supported(GpuBackend::Vulkan, &gpu(GpuVendor::Other, "Intel Arc A770")));
     }
 
     #[test]
@@ -964,10 +1022,10 @@ impl Settings {
         resolve_backend(self.gpu_backend, detect_gpu())
     }
 
-    /// The INT8 tensor-core model needs the CUDA build's CUTLASS INT8 kernels.
-    /// The INT8 model needs the CUDA engine and an NVIDIA card with tensor cores.
+    /// The pinned sd.cpp release also accelerates INT8 ConvRot with HIP on
+    /// CDNA/RDNA3+; CUTLASS is the CUDA implementation, not a file-format requirement.
     pub fn int8_supported(&self) -> bool {
-        self.backend() == GpuBackend::Cuda && has_tensor_cores(&detect_gpu().name)
+        native_int8_supported(self.backend(), detect_gpu())
     }
 
     /// Folder of the engine build for `backend`: `runtime/` for CUDA (where it always was),
@@ -1067,7 +1125,7 @@ impl Settings {
         match self.variant {
             ModelVariant::Q4 if self.small_diffusion() => "Q3_K_S",
             ModelVariant::Q4 => "Q4_K_M",
-            ModelVariant::Int8 => t!("INT8 텐서코어", "INT8 tensor cores"),
+            ModelVariant::Int8 => "INT8 ConvRot",
         }
     }
 
@@ -1137,7 +1195,7 @@ impl Settings {
         v
     }
 
-    /// Off CUDA the INT8 model can't run: fall back to Q4 (the choice is hidden there).
+    /// Unsupported engines/devices use Q4; supported HIP devices retain INT8.
     pub fn fit_to_gpu(&mut self) {
         if self.variant == ModelVariant::Int8 && !self.int8_supported() {
             self.variant = ModelVariant::Q4;

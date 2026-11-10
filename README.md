@@ -164,8 +164,8 @@ The app can run on AMD Radeon cards with stable-diffusion.cpp's **official** AMD
 | AMD on Linux otherwise | Vulkan (upstream builds it on Ubuntu 26.04: needs **glibc 2.43+**) | 42 MB |
 
 The device name the engine uses (`ROCm0`, `Vulkan0`) is read from `sd-server --list-devices`, and the same placement as on
-NVIDIA is used: weights mirrored in RAM, a 6 GB VRAM budget (less on cards under 8 GB). Not available off CUDA: the
-**INT8 tensor-core model** (it needs the CUDA build's CUTLASS INT8 kernels; the app uses Q4_K_M there and hides the option).
+NVIDIA is used: weights mirrored in RAM, a 6 GB VRAM budget (less on cards under 8 GB). The
+**INT8 ConvRot model** is available with CUDA on NVIDIA tensor-core GPUs and with ROCm on CDNA/RDNA3/RDNA3.5/RDNA4 devices. Older AMD devices and Vulkan keep Q4_K_M selected; Vulkan INT8 needs device-feature detection before the app can offer it safely.
 ⚡ Fast mode and every generation mode stay available. The photo describer was already a Vulkan build and runs on AMD
 drivers too.
 
