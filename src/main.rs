@@ -16,6 +16,7 @@ mod mask;
 mod metadata;
 mod safety;
 mod theme;
+mod update;
 
 /// Window title and the name of the settings folder (Windows: %APPDATA%\<APP_NAME>\data;
 /// Linux: ~/.local/share/rustimagestudio, lowercased without spaces by `eframe::storage_dir`).

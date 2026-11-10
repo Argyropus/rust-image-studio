@@ -77,7 +77,7 @@ Every control, menu and option is documented in the **[menu guide](docs/GUIDE.md
 - **✍️ Text in images**<br>Renders legible signage text, including Hangul. A one-click text template, validated prompt tips and per-mode examples are built in.
 - **🧵 Workflow essentials**<br>A job queue that accepts work while generating, batch prompts (one per line), multi-image runs, fixed or random seeds, clipboard paste and copy, drag and drop anywhere, and Save as PNG/WebP/JPG.
 - **🌏 Bilingual UI**<br>Korean and English, switchable live from the top bar. Prompts perform equally well in either language.
-- **🛡️ Responsible by default**<br>A built-in guard refuses prompts that sexualize minors. Everything else stays on your machine, with no telemetry and no uploads.
+- **🛡️ Responsible by default**<br>A built-in guard refuses prompts that sexualize minors. Everything else stays on your machine, with no telemetry and no uploads. The only request after setup is a version check: at startup the app asks GitHub for the latest release number and shows a badge when a newer one exists (nothing about your PC, prompts or images is sent; Settings turns it off).
 
 <p align="center"><img src="docs/showcase-expand-en.webp" alt="Smart Expand: drag the edges, get a wider photo with the original untouched" width="100%"></p>
 

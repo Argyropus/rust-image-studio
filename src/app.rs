@@ -340,6 +340,9 @@ pub struct StudioApp {
     dl: DlState,
     dl_tx: Sender<DlEvent>,
     dl_rx: Receiver<DlEvent>,
+    /// Tag of a newer release, once the startup check found one.
+    update_tag: Option<String>,
+    update_rx: Receiver<String>,
 }
 
 impl StudioApp {
@@ -413,6 +416,10 @@ impl StudioApp {
         let (dl_tx, dl_rx) = channel();
         let (input_tx, input_rx) = channel();
         let (caption_tx, caption_rx) = channel();
+        let (update_tx, update_rx) = channel();
+        if settings.check_updates {
+            crate::update::check(update_tx, cc.egui_ctx.clone());
+        }
         let selected = history.entries.first().map(|e| e.id);
 
         let mut app = Self {
@@ -481,8 +488,14 @@ impl StudioApp {
             dl: DlState::default(),
             dl_tx,
             dl_rx,
+            update_tag: None,
+            update_rx,
         };
         app.lora_files = crate::lora::scan(&app.settings.lora_dir());
+        // Self-test only: start with the engine log window open (QIS_OPEN=logs).
+        if std::env::var_os("QIS_SHOT_DIR").is_some() && std::env::var("QIS_OPEN").is_ok_and(|v| v == "logs") {
+            app.show_logs = true;
+        }
         if slow_defaults {
             app.toast(
                 t!(
@@ -1723,6 +1736,9 @@ impl StudioApp {
             }
         }
 
+        if let Ok(tag) = self.update_rx.try_recv() {
+            self.update_tag = Some(tag);
+        }
         while let Ok(ev) = self.dl_rx.try_recv() {
             match ev {
                 DlEvent::Progress { file, done, total } => {
@@ -1983,8 +1999,61 @@ impl StudioApp {
                         }
                     }
                 }
+                if let Some(tag) = &self.update_tag {
+                    ui.add_space(8.0);
+                    let r = status_pill(ui, ACCENT_HOVER, &tf!("새 버전 {}", "{} available", tag), false)
+                        .on_hover_cursor(CursorIcon::PointingHand)
+                        .on_hover_text(tf!(
+                            "새 버전이 나왔습니다 (지금 {}). 누르면 다운로드 페이지가 열립니다.\n실행 파일만 바꾸면 되고, 모델과 설정은 그대로 유지됩니다.",
+                            "A newer version is out (this is {}). Click to open the download page.\nOnly the executable changes: your models and settings stay.",
+                            env!("CARGO_PKG_VERSION")
+                        ));
+                    if r.clicked() {
+                        let _ = open::that(crate::update::RELEASES_URL);
+                    }
+                }
             });
         });
+    }
+
+    /// What a bug report needs, as plain English text: app version, system, graphics card,
+    /// memory, engine and how it placed the weights. No paths, prompts or images.
+    fn system_info(&self) -> String {
+        let gib = |b: Option<u64>| b.map(|b| format!("{:.1} GB", b as f64 / (1u64 << 30) as f64)).unwrap_or_else(|| "unknown".into());
+        let gpu = crate::config::detect_gpu();
+        let gpu_name = if gpu.name.is_empty() { "unknown" } else { gpu.name.as_str() };
+        let gpu_mem = if gpu.unified { format!("integrated, {} shared memory", gib(gpu.vram_bytes)) } else { format!("{} VRAM", gib(gpu.vram_bytes)) };
+        let file = |p: &std::path::Path| p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let s = &self.settings;
+        let backend = match s.backend() {
+            GpuBackend::Cuda => "CUDA",
+            GpuBackend::Rocm => "ROCm",
+            GpuBackend::Vulkan => "Vulkan",
+            GpuBackend::Auto => "Automatic",
+        };
+        let state = match &self.engine_state {
+            EngineState::Ready => "ready".to_owned(),
+            EngineState::Loading { .. } => "loading".to_owned(),
+            EngineState::Stopped => "stopped".to_owned(),
+            EngineState::Error(e) => format!("error: {e}"),
+        };
+        let mut out = vec![
+            format!("{} {} ({} {})", crate::APP_NAME, env!("CARGO_PKG_VERSION"), std::env::consts::OS, std::env::consts::ARCH),
+            format!("GPU: {gpu_name} · {gpu_mem}"),
+            format!("RAM: {} total, {} free", gib(crate::config::total_ram_bytes()), gib(crate::config::available_ram_bytes())),
+            format!("Engine: {backend} · {state}"),
+            format!("Models: {} · {} · {}", file(&s.active_diffusion()), file(&s.active_text_encoder()), file(&s.vae)),
+        ];
+        // The engine's own lines about devices and placement, from its last start.
+        let start = self.logs.iter().rposition(|l| l.starts_with(crate::engine::PLACEMENT_LOG)).unwrap_or(self.logs.len());
+        out.extend(self.logs.iter().skip(start).take(1).cloned());
+        if !s.extra_args.trim().is_empty() {
+            out.push(format!("Extra arguments: {}", s.extra_args.trim()));
+        }
+        if let Some(e) = self.history.entries.first() {
+            out.push(format!("Last image: {}×{}, {:.1} s", e.width, e.height, e.elapsed));
+        }
+        out.join("\n")
     }
 
     fn controls(&mut self, ui: &mut Ui) {
@@ -4025,6 +4094,10 @@ impl StudioApp {
                 ui.checkbox(&mut draft.warmup, t!("시작할 때 예열하기 (권장)", "Warm up at startup (recommended)"))
                     .on_hover_text("엔진 준비 직후 아주 작은 이미지를 한 번 생성해 모델을 메모리에 올려 둡니다.
 첫 생성이 약 36초 → 18초 수준으로 빨라집니다. 결과물에는 영향이 없습니다.");
+                ui.checkbox(&mut draft.check_updates, t!("시작할 때 새 버전 확인", "Check for a new version at startup")).on_hover_text(t!(
+                    "GitHub에 최신 버전 번호만 한 번 물어봅니다. PC 정보, 프롬프트, 이미지는 보내지 않습니다.",
+                    "Asks GitHub once for the latest version number. Nothing about your PC, prompts or images is sent."
+                ));
                 ui.horizontal(|ui| {
                     ui.label(t!("추가 인자", "Extra arguments"));
                     ui.add(TextEdit::singleline(&mut draft.extra_args).hint_text(t!("고급 사용자용 sd-server 인자 (예: --max-vram 7)", "sd-server arguments for advanced users (e.g. --max-vram 7)")).desired_width(f32::INFINITY));
@@ -4083,6 +4156,7 @@ impl StudioApp {
 
     fn logs_window(&mut self, ctx: &Context) {
         let mut open = self.show_logs;
+        let mut copied_info = false;
         egui::Window::new(bold(t!("엔진 로그", "Engine log"), 15.0))
             .open(&mut open)
             .default_size([760.0, 420.0])
@@ -4090,6 +4164,17 @@ impl StudioApp {
                 ui.horizontal(|ui| {
                     if ui.button(t!("📋 전체 복사", "📋 Copy all")).clicked() {
                         ctx.copy_text(self.logs.iter().cloned().collect::<Vec<_>>().join("\n"));
+                    }
+                    if ui
+                        .button(t!("🖥 시스템 정보 복사", "🖥 Copy system info"))
+                        .on_hover_text(t!(
+                            "문제를 알릴 때 붙여 넣을 요약을 복사합니다: 앱 버전, 그래픽카드, 메모리, 엔진, 메모리 배치.\n경로, 프롬프트, 이미지는 들어가지 않습니다.",
+                            "Copies a summary to paste into a bug report: app version, graphics card, memory, engine, weight placement.\nNo paths, prompts or images."
+                        ))
+                        .clicked()
+                    {
+                        ctx.copy_text(self.system_info());
+                        copied_info = true;
                     }
                     if ui.button(t!("지우기", "Clear")).clicked() {
                         self.logs.clear();
@@ -4105,6 +4190,9 @@ impl StudioApp {
                 });
             });
         self.show_logs = open;
+        if copied_info {
+            self.toast(t!("시스템 정보를 복사했습니다", "System info copied"), GREEN);
+        }
     }
 
     /// Asks what to do with a dropped PNG that carries its generation settings.
@@ -4391,6 +4479,7 @@ impl eframe::App for StudioApp {
                 if let Some(dir) = std::env::var_os("QIS_SHOT_DIR") {
                     let text: Vec<&str> = self.logs.iter().map(|s| s.as_str()).collect();
                     let _ = std::fs::write(std::path::Path::new(&dir).join("engine_log.txt"), text.join("\n"));
+                    let _ = std::fs::write(std::path::Path::new(&dir).join("system_info.txt"), self.system_info());
                 }
             }
             // Self-test of the first-run download: one shot mid-way through the CUDA zip

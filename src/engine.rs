@@ -419,6 +419,9 @@ impl Worker {
         #[cfg(target_os = "linux")]
         die_with_parent(&mut cmd);
 
+        // The placement the engine was started with, for bug reports (no paths in it).
+        let args: Vec<String> = cmd.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
+        self.emit(EngineEvent::Log(format!("{PLACEMENT_LOG}{}", placement_args(&args))));
         self.emit(EngineEvent::Log(tf!("엔진 시작: {} (포트 {})", "Engine start: {} (port {})", exe.display(), port)));
         let mut child = cmd.spawn().context(t!("sd-server 실행 실패", "Failed to start sd-server"))?;
         #[cfg(windows)]
@@ -1081,6 +1084,27 @@ use crate::config::LOW_RAM_BYTES;
 /// RAM left over for Windows/Linux and the apps already open when all weights are in RAM.
 const RAM_HEADROOM: u64 = 2 << 30;
 
+/// Prefix of the log line listing the engine's memory placement (the same in every UI
+/// language, so "Copy system info" finds it).
+pub const PLACEMENT_LOG: &str = "Placement: ";
+
+/// The memory-placement arguments out of the engine's command line, with their values.
+fn placement_args(args: &[String]) -> String {
+    const WITH_VALUE: [&str; 4] = ["--backend", "--params-backend", "--max-vram", "--vae-tile-size"];
+    const FLAGS: [&str; 2] = ["--vae-tiling", "--offload-to-cpu"];
+    let mut out: Vec<&str> = Vec::new();
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        if WITH_VALUE.contains(&a.as_str()) {
+            out.push(a);
+            out.extend(it.next().map(String::as_str));
+        } else if FLAGS.contains(&a.as_str()) {
+            out.push(a);
+        }
+    }
+    out.join(" ")
+}
+
 /// Whether all weights can stay in RAM: the PC has the RAM (`LOW_RAM_BYTES`) and enough of
 /// it is free now. On a 16 GB PC with a browser open, the 10.2 GB in-RAM set got paged
 /// out and the engine stalled for minutes; reading the text encoder from disk instead
@@ -1568,6 +1592,18 @@ mod ram_tests {
         assert!(!weights_fit_in_ram(Some(8 * GB), Some(7 * GB), 1));
         // Unknown figures keep the old behaviour.
         assert!(weights_fit_in_ram(None, None, weights));
+    }
+
+    #[test]
+    fn placement_line_has_no_paths() {
+        let args: Vec<String> = ["--port", "7797", "--diffusion-model", "/home/user/models/x.gguf", "--backend", "diffusion=Vulkan0,te=Vulkan0,vae=Vulkan0", "--params-backend", "diffusion=Vulkan0,te=disk,vae=Vulkan0", "--max-vram", "0", "--vae-tiling", "--vae-tile-size", "512x512"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(
+            super::placement_args(&args),
+            "--backend diffusion=Vulkan0,te=Vulkan0,vae=Vulkan0 --params-backend diffusion=Vulkan0,te=disk,vae=Vulkan0 --max-vram 0 --vae-tiling --vae-tile-size 512x512"
+        );
     }
 
     #[test]

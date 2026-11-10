@@ -288,6 +288,8 @@ The UI language is switched with **한 / EN** in the top bar, not in Settings.
 
 - **Help (? or F1)**: shortcut table and four usage tips.
 - **Engine log**: the engine process's output. **📋 Copy all** copies it to the clipboard and **Clear** empties the view. Errors are highlighted in red.
+- **🖥 Copy system info**: copies a short summary for bug reports: app version, graphics card and its memory, RAM, engine, how the weights were placed, and the last image's time. It contains no paths, prompts or images.
+- **New-version badge**: when a newer release exists, the top bar shows "vX.Y.Z available"; click it to open the download page. Only the executable changes, your models and settings stay. The check asks GitHub for the latest version number once at startup and can be turned off in Settings.
 
 ---
 

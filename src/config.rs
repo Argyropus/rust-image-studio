@@ -929,6 +929,8 @@ pub struct Settings {
     /// The GTX defaults ("Fast" size, Lightning 4 steps) were applied once; after that
     /// the user's own choices stay.
     pub slow_gpu_defaults: bool,
+    /// Ask GitHub at startup whether a newer release exists (one anonymous request).
+    pub check_updates: bool,
 }
 
 impl Default for Settings {
@@ -951,6 +953,7 @@ impl Default for Settings {
             lang_chosen: false,
             gpu_backend: GpuBackend::Auto,
             slow_gpu_defaults: false,
+            check_updates: true,
         }
     }
 }
