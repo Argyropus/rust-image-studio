@@ -114,10 +114,21 @@ stable-diffusion.cpp가 같은 태그(`master-1052-f5df5f8`)로 배포하는 **�
 | 감지된 GPU | 자동 선택 엔진 | 다운로드 |
 |---|---|---|
 | NVIDIA (드라이버 있음) | CUDA 12 + CUDA 런타임 (기존과 동일) | 363MB + 563MB |
-| AMD Radeon RX 6000 / 7000 / 9000, Radeon PRO W6000–W9000, Radeon 8060S/8050S/8040S (Windows) | ROCm/HIP. zip에 HIP 런타임 DLL이 포함되어 AMD Adrenalin 드라이버만 있으면 됩니다 | 266MB |
-| 그 밖의 AMD Radeon (RX 5000 이하, 대부분의 내장 Radeon 그래픽) | Vulkan | 30MB |
+| AMD Radeon RX 6000 / 7000 / 9000, Radeon PRO W6000–W9000, Radeon 8060S/8050S/8040S (Windows), ROCm 7 라이브러리 설치 시 | ROCm/HIP. zip에 HIP 런타임 DLL은 있지만 `hipblas.dll`은 없습니다(아래 참고) | 266MB |
+| 그 밖의 AMD Radeon (RX 5000 이하, 대부분의 내장 Radeon 그래픽), 또는 ROCm 7 라이브러리가 없는 Windows의 Radeon | Vulkan. 그래픽 드라이버만 있으면 됩니다 | 30MB |
 | Linux AMD + `/dev/kfd` + 지원 `gfx` 타깃 + ROCm 7 설치(`libamdhip64.so.7`, `libhipblas.so.3`, `librocblas.so.5`) | ROCm (Ubuntu 24.04 빌드, glibc 2.38 이상) | 298MB |
 | 그 밖의 Linux AMD | Vulkan (업스트림이 Ubuntu 26.04에서 빌드: **glibc 2.43 이상** 필요) | 42MB |
+
+**Windows의 ROCm에는 ROCm 7 라이브러리가 필요합니다.** stable-diffusion.cpp의 Windows ROCm zip에는 HIP 런타임(`amdhip64_7.dll`,
+`amd_comgr.dll`, `rocm_kpack.dll`)이 들어 있지만, `stable-diffusion.dll`이 함께 불러오는 `hipblas.dll`과 그것이 쓰는 `rocblas.dll`은
+들어 있지 않습니다. 이 둘은 ROCm 7 설치본에서 옵니다. [AMD ROCm Windows 설치 안내](https://rocm.docs.amd.com/projects/install-on-windows/en/latest/)를 참고하세요.
+
+- 앱은 엔진 폴더, `System32`, `PATH`, `HIP_PATH\bin`에서 `hipblas.dll`을 찾고, 찾은 폴더를 엔진 프로세스의 `PATH` 맨 앞에 둡니다.
+  시스템 `PATH`는 바꾸지 않습니다.
+- 찾지 못하면 자동 선택은 Vulkan을 씁니다. **AMD ROCm**을 직접 고르면 시작 실패 대신 무엇이 없는지 알려 줍니다.
+- 버전을 섞지 마세요. ROCm 6의 `hipblas.dll`(`amdhip64_6.dll`용)을 포함된 HIP 7 런타임과 함께 쓰면 실행 중 오류가 납니다
+  (예: `hipblasSetStream`). 앱은 폴더의 라이브러리가 어떤 HIP 런타임용인지 읽어, `PATH`에서 앞에 있더라도 ROCm 6 폴더는 건너뜁니다.
+- ROCm 7을 설치한 뒤에는 앱을 다시 시작하세요. [#3](https://github.com/hid276/rust-image-studio/issues/3)에서 제보된 내용입니다.
 
 엔진이 쓸 장치 이름(`ROCm0`, `Vulkan0`)은 `sd-server --list-devices` 출력에서 읽으며, 메모리 배치는 NVIDIA와 동일합니다(가중치 RAM
 사본, VRAM 6GB 한도, 8GB 미만 카드는 더 낮게). **INT8 ConvRot 모델**은 NVIDIA CUDA와 CDNA·RDNA3·RDNA3.5·RDNA4 계열의 AMD ROCm에서 선택할 수 있습니다.
@@ -135,9 +146,9 @@ GTT(`mem_info_gtt_total`), Windows에서는 공유 GPU 메모리(RAM의 절반)�
 
 | 검증 완료 | 환경 |
 |---|---|
-| GPU 감지, 엔진 선택, 장치 이름 파싱, Linux ROCm zip의 `build/bin/` 구조 처리, VRAM 한도 계산: 단위 테스트 | Windows |
+| GPU 감지, 엔진 선택, 장치 이름 파싱, Linux ROCm zip의 `build/bin/` 구조 처리, Windows ROCm 라이브러리 탐색(ROCm 6·7 폴더 구분), VRAM 한도 계산: 단위 테스트 | Windows |
 | NVIDIA 경로 무변경: 여전히 `CUDA0`·CUDA 런타임 다운로드, 1024×1024 18.3초/19.5초, 전체 테스트 통과 | Windows, RTX 3060 Ti |
-| AMD zip 4종의 구성·의존성(Windows는 HIP DLL 포함, Linux ROCm은 시스템 ROCm 7 링크, Linux Vulkan은 glibc 2.43 필요) | 배포 아카이브 직접 분석 |
+| AMD zip 4종의 구성·의존성(Windows는 HIP 런타임 DLL 포함·`hipblas.dll`은 미포함, Linux ROCm은 시스템 ROCm 7 링크, Linux Vulkan은 glibc 2.43 필요) | 배포 아카이브 직접 분석 |
 | **앱에서 Vulkan 엔진 경로 전체 동작**: 장치 `Vulkan0` 인식, Q4_K_M 1024×1024 21.5초(새 프롬프트)/19.1초(반복), ⚡ 빠른 모드 15.1–15.8초. 최초 실행 예열 83초(셰이더 컴파일), 이후 22초 | Windows, 업스트림 Vulkan zip을 **RTX 3060 Ti**에서 실행(AMD가 아닌 NVIDIA Vulkan 드라이버) |
 | 로컬 미러로 Vulkan 엔진 최초 설치: 목록에 CUDA 런타임 없음, `runtime\vulkan\`에 압축 해제, 설치 화면의 GPU 안내·다운로드 실패 표시 | Windows |
 | APU 배치(가중치 `Vulkan0`, 텍스트 인코더 디스크, `--max-vram 0`)를 엔진이 받아들이고 정상 생성, 공유 메모리 8GB를 가정해 실행 | Windows, Vulkan zip을 RTX 3060 Ti에서 실행 |
@@ -145,7 +156,7 @@ GTT(`mem_info_gtt_total`), Windows에서는 공유 GPU 메모리(RAM의 절반)�
 | 미검증 | 이유 |
 |---|---|
 | AMD Radeon에서의 실제 생성(ROCm·Vulkan 모두), 속도와 VRAM 동작 | AMD GPU 없음 |
-| Windows ROCm 빌드와 Adrenalin 드라이버 버전의 호환성, RX 6000/7000/9000 이름 기반 자동 선택 기준 | AMD 하드웨어 필요 |
+| Windows ROCm 빌드와 Adrenalin 드라이버 버전의 호환성, RX 6000/7000/9000 이름 기반 자동 선택 기준, 실제 ROCm 7 설치본에서의 `hipblas.dll` 탐색 | AMD 하드웨어 필요 |
 | 실제 ROCm 7이 설치된 Linux의 ROCm 엔진, Ubuntu 26.04에서의 Linux Vulkan 엔진 | AMD 하드웨어 / 26.04 환경 필요 |
 | 실제 APU(GTT 공유 메모리)에서의 속도와 메모리 동작 | APU 필요 |
 

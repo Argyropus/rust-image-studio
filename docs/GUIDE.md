@@ -271,7 +271,7 @@ Open via ⚙ **Settings** in the top bar. Changes take effect only on **Save and
 
 | Item | Function |
 |---|---|
-| **GPU** | Engine build: **Automatic → …** (shows what it picks), **NVIDIA CUDA**, **AMD ROCm (experimental)**, **Vulkan (experimental)**. Automatic uses CUDA on NVIDIA; on AMD Radeon it uses ROCm where supported (Windows: RX 6000/7000/9000 series; Linux: with ROCm 7 installed), otherwise Vulkan. Below: the detected card. Switching downloads that engine on save (Vulkan about 30–40 MB, ROCm about 270–300 MB) into `runtime\vulkan\` or `runtime\rocm\`. If the engine finds no GPU, an error suggests another option here. |
+| **GPU** | Engine build: **Automatic → …** (shows what it picks), **NVIDIA CUDA**, **AMD ROCm (experimental)**, **Vulkan (experimental)**. Automatic uses CUDA on NVIDIA; on AMD Radeon it uses ROCm on a supported card with the ROCm 7 libraries installed (Windows: RX 6000/7000/9000 series and `hipblas.dll` from ROCm 7; Linux: ROCm 7), otherwise Vulkan. Below: the detected card. Switching downloads that engine on save (Vulkan about 30–40 MB, ROCm about 270–300 MB) into `runtime\vulkan\` or `runtime\rocm\`. If the engine finds no GPU, an error suggests another option here. |
 | **Generation model** | **Standard · Q4_K_M (4.2 GB)**: minimal RAM use. **High quality · fast · INT8 tensor core (7.3 GB)**: faster per step, quality closer to the original model. If the file is missing, a **⬇ Download (7.3 GB)** button appears. The INT8 option (and the **Model** menu next to Generate) is hidden unless the engine is NVIDIA CUDA. |
 | **File paths** | Engine folder · Q4 model · INT8 model (CUDA only) · text encoder · VAE · output folder. 📂 browses; ✔ found / ✖ Missing / New folder is shown on the right. Changing the output folder rebuilds the gallery from that location. |
 | **Memory · Performance** | Describes the memory placement policy (VRAM capped at 6 GB). |
@@ -346,6 +346,7 @@ Notifications appear at the bottom center for 4 seconds. Status colors: **green 
 |---|---|
 | Top bar shows **Engine off** | Click the status to start the engine (about 40 s). |
 | Top bar shows **Error** | Click to restart. If it recurs, collect the log via **log → 📋 Copy all** and report it. |
+| "The ROCm engine needs the ROCm 7 libraries" / "…are built for another version" | Windows, **AMD ROCm** chosen: `hipblas.dll` and `rocblas.dll` from ROCm 7 were not found, or only a ROCm 6 copy was. Install ROCm 7 ([AMD's guide](https://rocm.docs.amd.com/projects/install-on-windows/en/latest/)) and restart the app, or pick **Vulkan** in **Settings → GPU**, which needs only the graphics driver. |
 | "The engine (…) found no GPU to use" | The ROCm or Vulkan engine saw no usable GPU. Update the graphics driver, or pick another engine in **Settings → GPU** (e.g. Vulkan instead of ROCm). |
 | Generate is disabled | The engine is off or in an error state; click the status in the top bar. |
 | Edit mode does not run | The vision module is required: run **⬇ Download vision module** in the input image card. |

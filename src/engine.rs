@@ -310,6 +310,25 @@ impl Worker {
         // The AMD builds (ROCm, Vulkan) name their devices differently (ROCm0, Vulkan0),
         // so the device comes from the engine's own list; CUDA keeps its tested CUDA0.
         let backend = s.backend();
+        // Windows ROCm build: hipblas.dll and rocblas.dll come from a ROCm 7 install, not
+        // from the zip. Without them the engine can't even list its devices, so say what is
+        // missing instead; with them, their folder leads the engine's PATH (ours is left
+        // alone), ahead of a ROCm 6 that may sit on the system PATH.
+        #[cfg(windows)]
+        let rocm_libs = if backend == GpuBackend::Rocm {
+            match crate::config::rocm_runtime(&s.engine_dir()) {
+                crate::config::RocmRuntime::Found(dir) => {
+                    self.emit(EngineEvent::Log(tf!("ROCm 라이브러리: {}", "ROCm libraries: {}", dir.display())));
+                    prepend_path(&mut cmd, &dir);
+                    Some(dir)
+                }
+                other => bail!("{}", crate::config::rocm_runtime_problem(&other).unwrap_or_default()),
+            }
+        } else {
+            None
+        };
+        #[cfg(not(windows))]
+        let rocm_libs: Option<PathBuf> = None;
         // APU: the GPU's memory is system RAM, so a RAM copy of the weights plus the
         // `--max-vram` working set would hold them twice. Weights then live on the GPU
         // device itself, once.
@@ -318,7 +337,7 @@ impl Worker {
             let device = if backend == GpuBackend::Cuda {
                 "CUDA0".to_owned()
             } else {
-                let list = list_devices(&exe, &s.engine_dir())?;
+                let list = list_devices(&exe, &s.engine_dir(), rocm_libs.as_deref())?;
                 for l in list.lines().filter(|l| !l.trim().is_empty()) {
                     self.emit(EngineEvent::Log(tf!("장치: {}", "Device: {}", l.replace('\t', " · ").trim_end())));
                 }
@@ -475,11 +494,17 @@ impl Worker {
                 if let Some(r) = self.running.take() {
                     self.emit(EngineEvent::JobFailed { id: r.job.id, message: t!("엔진이 종료되었습니다", "The engine exited").into() });
                 }
-                self.set_state(EngineState::Error(tf!(
-                    "엔진이 예기치 않게 종료되었습니다 ({}). 로그를 확인하세요.",
-                    "The engine exited unexpectedly ({}). Check the log.",
-                    status
-                )));
+                // Windows: 0xC0000135, a DLL the engine imports was not found by the loader.
+                let missing_dll = cfg!(windows) && status.code() == Some(0xC000_0135_u32 as i32);
+                self.set_state(EngineState::Error(if missing_dll {
+                    tf!(
+                        "엔진이 시작되지 못했습니다 ({}): 필요한 DLL을 찾지 못했습니다. ROCm 엔진이라면 ROCm 7의 hipblas.dll과 rocblas.dll이 있어야 합니다. 설정 → GPU에서 Vulkan을 고를 수도 있습니다.",
+                        "The engine could not start ({}): a DLL it needs was not found. The ROCm engine needs hipblas.dll and rocblas.dll from ROCm 7. You can also pick Vulkan in Settings → GPU.",
+                        status
+                    )
+                } else {
+                    tf!("엔진이 예기치 않게 종료되었습니다 ({}). 로그를 확인하세요.", "The engine exited unexpectedly ({}). Check the log.", status)
+                }));
                 return;
             }
         }
@@ -1455,10 +1480,21 @@ fn pump_log(pipe: Box<dyn Read + Send>, tx: Sender<EngineEvent>) {
     }
 }
 
+/// Puts `dir` first on the PATH of the process `cmd` starts, so Windows resolves the DLLs
+/// that process imports there before the system-wide PATH.
+#[cfg(windows)]
+fn prepend_path(cmd: &mut Command, dir: &std::path::Path) {
+    let rest = std::env::var_os("PATH").unwrap_or_default();
+    let dirs = std::iter::once(dir.to_path_buf()).chain(std::env::split_paths(&rest));
+    if let Ok(path) = std::env::join_paths(dirs) {
+        cmd.env("PATH", path);
+    }
+}
+
 /// `sd-server --list-devices` ("name<TAB>description" per line on stdout; the backends'
 /// own log lines go to stderr and are dropped). A list with a GPU is kept for the rest of
 /// the run, so engine restarts don't pay for the device scan again. Gives up after 60 s.
-fn list_devices(exe: &std::path::Path, dir: &std::path::Path) -> Result<String> {
+fn list_devices(exe: &std::path::Path, dir: &std::path::Path, lib_dir: Option<&std::path::Path>) -> Result<String> {
     static CACHE: std::sync::Mutex<Vec<(PathBuf, String)>> = std::sync::Mutex::new(Vec::new());
     if let Some((_, l)) = CACHE.lock().ok().and_then(|c| c.iter().find(|(p, _)| p == exe).cloned()) {
         return Ok(l);
@@ -1469,7 +1505,12 @@ fn list_devices(exe: &std::path::Path, dir: &std::path::Path) -> Result<String> 
     {
         use std::os::windows::process::CommandExt;
         cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+        if let Some(lib_dir) = lib_dir {
+            prepend_path(&mut cmd, lib_dir);
+        }
     }
+    #[cfg(not(windows))]
+    let _ = lib_dir;
     #[cfg(target_os = "linux")]
     die_with_parent(&mut cmd);
     let mut child = cmd.spawn().context(t!("sd-server 실행 실패", "Failed to start sd-server"))?;

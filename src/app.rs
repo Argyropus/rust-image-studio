@@ -3830,6 +3830,8 @@ impl StudioApp {
                         .color(AMBER),
                     );
                 }
+                #[cfg(windows)]
+                rocm_runtime_notice(ui, &self.settings);
                 if !space_ok {
                     ui.add_space(4.0);
                     ui.label(
@@ -4022,13 +4024,15 @@ impl StudioApp {
                 });
                 ui.label(
                     RichText::new(tf!(
-                        "감지: {} · 자동이면 NVIDIA는 CUDA, AMD Radeon은 ROCm 지원 카드(Windows: RX 6000/7000/9000 계열, Linux: ROCm 7 설치 시)면 ROCm, 그 밖에는 Vulkan을 씁니다. AMD·Vulkan은 실험 단계입니다. 바꾸면 해당 엔진(Vulkan 약 30–40MB, ROCm 약 270–300MB)을 받습니다.",
-                        "Detected: {} · Automatic uses CUDA on NVIDIA; on AMD Radeon it uses ROCm where supported (Windows: RX 6000/7000/9000 series, Linux: with ROCm 7 installed), otherwise Vulkan. AMD and Vulkan are experimental. Switching downloads that engine (Vulkan about 30–40 MB, ROCm about 270–300 MB).",
+                        "감지: {} · 자동이면 NVIDIA는 CUDA, AMD Radeon은 ROCm 지원 카드(Windows: RX 6000/7000/9000 계열)에 ROCm 7 라이브러리가 설치되어 있으면 ROCm, 그 밖에는 Vulkan을 씁니다. AMD·Vulkan은 실험 단계입니다. 바꾸면 해당 엔진(Vulkan 약 30–40MB, ROCm 약 270–300MB)을 받습니다.",
+                        "Detected: {} · Automatic uses CUDA on NVIDIA; on AMD Radeon it uses ROCm on a supported card (Windows: RX 6000/7000/9000 series) with the ROCm 7 libraries installed, otherwise Vulkan. AMD and Vulkan are experimental. Switching downloads that engine (Vulkan about 30–40 MB, ROCm about 270–300 MB).",
                         detected
                     ))
                     .size(12.0)
                     .color(TEXT_DIM),
                 );
+                #[cfg(windows)]
+                rocm_runtime_notice(ui, draft);
                 ui.add_space(8.0);
                 section(ui, t!("생성 모델", "Generation model"));
                 let int8_ok = draft.int8_supported();
@@ -4711,6 +4715,21 @@ fn gpu_notice(ui: &mut Ui, settings: &Settings) {
         .size(12.5)
         .color(AMBER),
     );
+}
+
+/// Windows, ROCm engine chosen: what is missing when ROCm 7's hipblas.dll can't be found
+/// (the engine zip doesn't ship it), with AMD's install guide.
+#[cfg(windows)]
+fn rocm_runtime_notice(ui: &mut Ui, settings: &Settings) {
+    if settings.backend() != GpuBackend::Rocm {
+        return;
+    }
+    let runtime = crate::config::rocm_runtime(&settings.engine_dir());
+    if let Some(problem) = crate::config::rocm_runtime_problem(&runtime) {
+        ui.add_space(4.0);
+        ui.label(RichText::new(problem).size(12.5).color(AMBER));
+        ui.hyperlink_to(RichText::new(t!("AMD ROCm Windows 설치 안내", "AMD's ROCm on Windows guide")).size(12.5), crate::config::ROCM_WINDOWS_URL);
+    }
 }
 
 /// Linux fallback shown when the engine archive couldn't be downloaded: how to build

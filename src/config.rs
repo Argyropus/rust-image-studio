@@ -133,8 +133,8 @@ pub struct GpuInfo {
     pub name: String,
     /// Memory the GPU can use: its VRAM, or for a unified-memory GPU the shared system RAM.
     pub vram_bytes: Option<u64>,
-    /// The ROCm engine build targets this GPU and, on Linux, the ROCm libraries it links
-    /// against are installed.
+    /// The ROCm engine build targets this GPU and the ROCm libraries it links against are
+    /// installed (Linux: libamdhip64/libhipblas/librocblas; Windows: hipblas.dll for HIP 7).
     pub rocm_ok: bool,
     /// An integrated Radeon (APU) whose memory is system RAM: only a small carve-out
     /// (BIOS "UMA frame buffer", often 512 MiB) is dedicated, and `vram_bytes` is the shared
@@ -198,7 +198,7 @@ pub fn detect_gpu() -> &'static GpuInfo {
 }
 
 /// The backend `choice` means on this PC: NVIDIA → CUDA; AMD → ROCm when the ROCm build
-/// supports the card (and, on Linux, ROCm is installed), else Vulkan. With no recognisable
+/// supports the card and the ROCm libraries are installed, else Vulkan. With no recognisable
 /// GPU the CUDA build stays the default, as before AMD support.
 pub fn resolve_backend(choice: GpuBackend, gpu: &GpuInfo) -> GpuBackend {
     match (choice, gpu.vendor) {
@@ -227,6 +227,246 @@ pub fn rocm_windows_supported(name: &str) -> bool {
         })
     };
     series_after("rx ") || series_after("pro w") || ["8060s", "8050s", "8040s"].iter().any(|m| n.contains(m))
+}
+
+/// The HIP runtime DLL stable-diffusion.cpp's Windows ROCm zip ships and links against.
+#[cfg(windows)]
+pub const HIP_RUNTIME_DLL: &str = "amdhip64_7.dll";
+
+/// AMD's guide for installing ROCm on Windows.
+#[cfg(windows)]
+pub const ROCM_WINDOWS_URL: &str = "https://rocm.docs.amd.com/projects/install-on-windows/en/latest/";
+
+/// Where the ROCm BLAS libraries of the Windows ROCm engine are. Its `stable-diffusion.dll`
+/// imports `hipblas.dll` (which loads `rocblas.dll`), and the zip ships neither: they come
+/// from a ROCm 7 install (AMD HIP SDK or the ROCm Python wheels), not from the driver.
+#[cfg(windows)]
+#[derive(Clone, Debug, PartialEq)]
+pub enum RocmRuntime {
+    /// A folder whose `hipblas.dll` goes with the bundled HIP runtime.
+    Found(PathBuf),
+    /// Only libraries built for another HIP runtime (the DLL they import), e.g. the
+    /// ROCm 6 HIP SDK: mixed with the bundled HIP 7 they fail inside hipBLAS.
+    Mismatch(PathBuf, String),
+    Missing,
+}
+
+/// The names of the DLLs a PE file imports, read from its import directory (nothing is
+/// loaded or run).
+#[cfg(windows)]
+pub fn pe_imports(path: &Path) -> Option<Vec<String>> {
+    use std::io::{Read, Seek, SeekFrom};
+    fn at(f: &mut std::fs::File, offset: u64, len: usize) -> Option<Vec<u8>> {
+        let mut b = vec![0u8; len];
+        f.seek(SeekFrom::Start(offset)).ok()?;
+        f.read_exact(&mut b).ok()?;
+        Some(b)
+    }
+    let u16le = |b: &[u8], o: usize| u16::from_le_bytes([b[o], b[o + 1]]) as usize;
+    let u32le = |b: &[u8], o: usize| u32::from_le_bytes([b[o], b[o + 1], b[o + 2], b[o + 3]]) as u64;
+    let f = &mut std::fs::File::open(path).ok()?;
+    let dos = at(f, 0, 0x40)?;
+    if &dos[..2] != b"MZ" {
+        return None;
+    }
+    let pe = u32le(&dos, 0x3c);
+    let head = at(f, pe, 24)?;
+    if &head[..4] != b"PE\0\0" {
+        return None;
+    }
+    let (sections, opt_size) = (u16le(&head, 6), u16le(&head, 20));
+    let opt = at(f, pe + 24, opt_size)?;
+    // Data directories start at 96 (PE32) or 112 (PE32+); the import table is the second.
+    let dirs = match opt.get(..2).map(|m| u16le(m, 0)) {
+        Some(0x20b) => 112,
+        Some(0x10b) => 96,
+        _ => return None,
+    };
+    if opt.len() < dirs + 16 {
+        return None;
+    }
+    let import_rva = u32le(&opt, dirs + 8);
+    if import_rva == 0 {
+        return Some(Vec::new());
+    }
+    let table = at(f, pe + 24 + opt_size as u64, sections * 40)?;
+    let offset = |rva: u64| {
+        table.chunks_exact(40).find_map(|s| {
+            let (vsize, va, rsize, raw) = (u32le(s, 8), u32le(s, 12), u32le(s, 16), u32le(s, 20));
+            (rva >= va && rva < va + vsize.max(rsize)).then(|| rva - va + raw)
+        })
+    };
+    let mut names = Vec::new();
+    let mut entry = offset(import_rva)?;
+    for _ in 0..4096 {
+        let e = at(f, entry, 20)?;
+        if e.iter().all(|&b| b == 0) {
+            break;
+        }
+        f.seek(SeekFrom::Start(offset(u32le(&e, 12))?)).ok()?;
+        let mut name = Vec::new();
+        f.take(260).read_to_end(&mut name).ok()?;
+        name.truncate(name.iter().position(|&b| b == 0).unwrap_or(name.len()));
+        names.push(String::from_utf8_lossy(&name).into_owned());
+        entry += 20;
+    }
+    Some(names)
+}
+
+/// `dir`'s ROCm BLAS libraries: `None` without a `hipblas.dll`, `Ok` when they go with the
+/// bundled HIP runtime (or name none), `Err(dll)` when they import another HIP runtime.
+#[cfg(windows)]
+fn rocm_dir_state(dir: &Path) -> Option<Result<(), String>> {
+    if !dir.join("hipblas.dll").is_file() {
+        return None;
+    }
+    let mut other = None;
+    for dll in ["hipblas.dll", "rocblas.dll"] {
+        for import in pe_imports(&dir.join(dll)).unwrap_or_default() {
+            let lower = import.to_ascii_lowercase();
+            if lower == HIP_RUNTIME_DLL {
+                return Some(Ok(()));
+            }
+            if lower.starts_with("amdhip64") {
+                other = Some(import);
+            }
+        }
+    }
+    Some(other.map_or(Ok(()), Err))
+}
+
+/// The first of `dirs` with usable ROCm BLAS libraries; failing that, the first mismatch.
+#[cfg(windows)]
+fn rocm_runtime_in(dirs: impl IntoIterator<Item = PathBuf>) -> RocmRuntime {
+    let mut mismatch = None;
+    for dir in dirs {
+        match rocm_dir_state(&dir) {
+            Some(Ok(())) => return RocmRuntime::Found(dir),
+            Some(Err(dll)) => {
+                mismatch.get_or_insert((dir, dll));
+            }
+            None => {}
+        }
+    }
+    mismatch.map_or(RocmRuntime::Missing, |(dir, dll)| RocmRuntime::Mismatch(dir, dll))
+}
+
+/// Folders to look in: where Windows itself resolves the engine's DLLs (the engine folder,
+/// System32, PATH), then the `bin` of an AMD HIP SDK, which sets `HIP_PATH` (and
+/// `HIP_PATH_<version>`) but leaves PATH alone.
+#[cfg(windows)]
+fn rocm_candidate_dirs(engine_dir: Option<&Path>) -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = engine_dir.map(Path::to_path_buf).into_iter().collect();
+    if let Some(root) = std::env::var_os("SystemRoot") {
+        dirs.push(PathBuf::from(root).join("System32"));
+    }
+    if let Some(path) = std::env::var_os("PATH") {
+        dirs.extend(std::env::split_paths(&path));
+    }
+    let mut sdk: Vec<_> = std::env::vars_os()
+        .filter(|(k, _)| {
+            let k = k.to_string_lossy().to_ascii_uppercase();
+            k.starts_with("HIP_PATH") || k == "ROCM_PATH"
+        })
+        .collect();
+    // Newest SDK first (HIP_PATH_71 before HIP_PATH_64); a ROCm 6 one is told apart anyway.
+    sdk.sort_by(|a, b| b.0.cmp(&a.0));
+    dirs.extend(sdk.into_iter().map(|(_, p)| PathBuf::from(p).join("bin")));
+    dirs.retain(|d| !d.as_os_str().is_empty());
+    dirs
+}
+
+/// The ROCm BLAS libraries for the ROCm engine in `engine_dir`. Looked up once per engine
+/// folder: a newly installed SDK reaches this process's environment only after a restart.
+#[cfg(windows)]
+pub fn rocm_runtime(engine_dir: &Path) -> RocmRuntime {
+    static CACHE: std::sync::Mutex<Vec<(PathBuf, RocmRuntime)>> = std::sync::Mutex::new(Vec::new());
+    let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((_, r)) = cache.iter().find(|(d, _)| d == engine_dir) {
+        return r.clone();
+    }
+    let r = rocm_runtime_in(rocm_candidate_dirs(Some(engine_dir)));
+    cache.push((engine_dir.to_path_buf(), r.clone()));
+    r
+}
+
+/// Why the ROCm engine can't start with what `runtime` found, as a message for the user.
+#[cfg(windows)]
+pub fn rocm_runtime_problem(runtime: &RocmRuntime) -> Option<String> {
+    match runtime {
+        RocmRuntime::Found(_) => None,
+        RocmRuntime::Missing => Some(
+            t!(
+                "ROCm 엔진에는 ROCm 7 라이브러리(hipblas.dll, rocblas.dll)가 필요한데 이 PC에서 찾지 못했습니다. AMD의 ROCm 7(HIP SDK)을 설치하고 앱을 다시 시작하거나, 설정 → GPU에서 Vulkan을 고르세요.",
+                "The ROCm engine needs the ROCm 7 libraries (hipblas.dll, rocblas.dll), and none were found on this PC. Install AMD's ROCm 7 (HIP SDK) and restart the app, or pick Vulkan in Settings → GPU."
+            )
+            .to_owned(),
+        ),
+        RocmRuntime::Mismatch(dir, dll) => Some(tf!(
+            "{} 폴더의 ROCm 라이브러리는 다른 버전용({})입니다. ROCm 엔진은 ROCm 7({})이 필요하며, 버전을 섞으면 실행 중 오류가 납니다. ROCm 7을 설치하고 앱을 다시 시작하거나, 설정 → GPU에서 Vulkan을 고르세요.",
+            "The ROCm libraries in {} are built for another version ({}). The ROCm engine needs ROCm 7 ({}), and mixing versions fails at run time. Install ROCm 7 and restart the app, or pick Vulkan in Settings → GPU.",
+            dir.display(),
+            dll,
+            HIP_RUNTIME_DLL
+        )),
+    }
+}
+
+#[cfg(all(test, windows))]
+mod rocm_runtime_tests {
+    use super::*;
+
+    /// A minimal PE32+ file whose import directory names `dll`.
+    fn fake_pe(dll: &str) -> Vec<u8> {
+        let mut b = vec![0u8; 0x400];
+        b[..2].copy_from_slice(b"MZ");
+        b[0x3c] = 0x40;
+        b[0x40..0x44].copy_from_slice(b"PE\0\0");
+        b[0x44..0x46].copy_from_slice(&0x8664u16.to_le_bytes());
+        b[0x46] = 1; // one section
+        b[0x54] = 240; // optional header size
+        let opt = 0x58;
+        b[opt..opt + 2].copy_from_slice(&0x20bu16.to_le_bytes());
+        b[opt + 120..opt + 124].copy_from_slice(&0x1000u32.to_le_bytes()); // import table RVA
+        let sec = opt + 240;
+        b[sec..sec + 6].copy_from_slice(b".idata");
+        for (o, v) in [(8, 0x200u32), (12, 0x1000), (16, 0x200), (20, 0x200)] {
+            b[sec + o..sec + o + 4].copy_from_slice(&v.to_le_bytes());
+        }
+        b[0x200 + 12..0x200 + 16].copy_from_slice(&0x1028u32.to_le_bytes()); // name RVA
+        b[0x228..0x228 + dll.len()].copy_from_slice(dll.as_bytes());
+        b
+    }
+
+    #[test]
+    fn rocm_libraries_are_found_and_told_apart() {
+        let exe = std::env::current_exe().unwrap();
+        let own = pe_imports(&exe).unwrap();
+        assert!(own.iter().any(|d| d.eq_ignore_ascii_case("kernel32.dll")), "{own:?}");
+
+        let root = std::env::temp_dir().join(format!("qis-rocm-test-{}", std::process::id()));
+        let dir = |n: &str| {
+            let d = root.join(n);
+            std::fs::create_dir_all(&d).unwrap();
+            d
+        };
+        let (empty, rocm6, rocm7, plain) = (dir("empty"), dir("rocm6"), dir("rocm7"), dir("plain"));
+        std::fs::write(rocm6.join("hipblas.dll"), fake_pe("rocblas.dll")).unwrap();
+        std::fs::write(rocm6.join("rocblas.dll"), fake_pe("amdhip64_6.dll")).unwrap();
+        std::fs::write(rocm7.join("hipblas.dll"), fake_pe("amdhip64_7.dll")).unwrap();
+        std::fs::write(plain.join("hipblas.dll"), fake_pe("rocblas.dll")).unwrap();
+        assert_eq!(pe_imports(&rocm7.join("hipblas.dll")).unwrap(), ["amdhip64_7.dll"]);
+
+        assert_eq!(rocm_runtime_in([empty.clone()]), RocmRuntime::Missing);
+        // ROCm 6 earlier on PATH: the ROCm 7 folder is still the one picked.
+        assert_eq!(rocm_runtime_in([empty.clone(), rocm6.clone(), rocm7.clone()]), RocmRuntime::Found(rocm7.clone()));
+        assert_eq!(rocm_runtime_in([rocm6.clone(), empty.clone()]), RocmRuntime::Mismatch(rocm6.clone(), "amdhip64_6.dll".into()));
+        // No HIP runtime named anywhere: nothing says it is the wrong one.
+        assert_eq!(rocm_runtime_in([plain.clone()]), RocmRuntime::Found(plain));
+        assert!(rocm_runtime_problem(&RocmRuntime::Missing).is_some());
+        assert!(rocm_runtime_problem(&RocmRuntime::Found(rocm7)).is_none());
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }
 
 /// INT8 ConvRot GEMM is accelerated by HIP on CDNA and RDNA3/3.5/4.
@@ -305,7 +545,11 @@ fn probe_adapters() -> Vec<GpuInfo> {
         let Some(vendor) = pci_vendor(&id).and_then(vendor_of) else { continue };
         let name = reg_string(&key, "DriverDesc").unwrap_or_default();
         let vram_bytes = reg_u64(&key, "HardwareInformation.qwMemorySize").or_else(|| reg_u64(&key, "HardwareInformation.MemorySize"));
-        let rocm_ok = vendor == GpuVendor::Amd && rocm_windows_supported(&name);
+        // The ROCm build needs ROCm 7's hipblas.dll from the system (the engine folder is
+        // not known here, and the download puts none in it).
+        let rocm_ok = vendor == GpuVendor::Amd
+            && rocm_windows_supported(&name)
+            && matches!(rocm_runtime_in(rocm_candidate_dirs(None)), RocmRuntime::Found(_));
         // Windows lets a GPU borrow up to half of RAM ("shared GPU memory").
         let shared = total_ram_bytes().map(|r| r / 2);
         let unified = vendor == GpuVendor::Amd && is_unified(integrated_radeon_name(&name), vram_bytes, shared);
@@ -800,8 +1044,9 @@ pub const CUDART_SOURCE: ModelSource = ModelSource {
 };
 
 /// AMD builds of the same stable-diffusion.cpp tag. The Windows ROCm zip ships the HIP
-/// runtime DLLs (amdhip64_7, amd_comgr, rocm_kpack) next to sd-server.exe, so only the
-/// AMD graphics driver is needed; the Vulkan zip runs on any GPU with a Vulkan driver.
+/// runtime DLLs (amdhip64_7, amd_comgr, rocm_kpack) next to sd-server.exe but not the
+/// hipblas.dll/rocblas.dll it imports: those come from a ROCm 7 install (`rocm_runtime`).
+/// The Vulkan zip runs on any GPU with a Vulkan driver.
 #[cfg(windows)]
 pub const ENGINE_ROCM_SOURCE: ModelSource = ModelSource {
     label: "생성 엔진 (stable-diffusion.cpp, AMD ROCm)",

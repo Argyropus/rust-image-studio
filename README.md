@@ -158,10 +158,22 @@ The app can run on AMD Radeon cards with stable-diffusion.cpp's **official** AMD
 | GPU found | Engine picked automatically | Download |
 |---|---|---|
 | NVIDIA (driver present) | CUDA 12 + CUDA runtime, unchanged | 363 MB + 563 MB |
-| AMD Radeon RX 6000 / 7000 / 9000, Radeon PRO W6000–W9000, Radeon 8060S/8050S/8040S (Windows) | ROCm/HIP; the zip ships the HIP runtime DLLs, so only the AMD Adrenalin driver is needed | 266 MB |
-| Other AMD Radeon (RX 5000 and older, most integrated Radeon graphics) | Vulkan | 30 MB |
+| AMD Radeon RX 6000 / 7000 / 9000, Radeon PRO W6000–W9000, Radeon 8060S/8050S/8040S (Windows), with the ROCm 7 libraries installed | ROCm/HIP; the zip ships the HIP runtime DLLs but not `hipblas.dll` (see below) | 266 MB |
+| Other AMD Radeon (RX 5000 and older, most integrated Radeon graphics), or any Radeon on Windows without the ROCm 7 libraries | Vulkan; only the graphics driver is needed | 30 MB |
 | AMD on Linux with `/dev/kfd`, a supported `gfx` target and ROCm 7 installed (`libamdhip64.so.7`, `libhipblas.so.3`, `librocblas.so.5`) | ROCm (Ubuntu 24.04 build, glibc 2.38+) | 298 MB |
 | AMD on Linux otherwise | Vulkan (upstream builds it on Ubuntu 26.04: needs **glibc 2.43+**) | 42 MB |
+
+**ROCm on Windows needs the ROCm 7 libraries.** stable-diffusion.cpp's Windows ROCm zip bundles the HIP runtime
+(`amdhip64_7.dll`, `amd_comgr.dll`, `rocm_kpack.dll`), but its `stable-diffusion.dll` also imports `hipblas.dll`, which loads
+`rocblas.dll`, and the zip ships neither. They come from a ROCm 7 install: see [AMD's ROCm on Windows guide](https://rocm.docs.amd.com/projects/install-on-windows/en/latest/).
+
+- The app looks for `hipblas.dll` in the engine folder, in `System32`, on `PATH` and under `HIP_PATH\bin`, and puts the folder
+  it found first on the engine process's own `PATH`. The system `PATH` is not changed.
+- Without it, Automatic picks Vulkan. Choosing **AMD ROCm** by hand then says what is missing instead of failing at start.
+- Do not mix versions. A ROCm 6 `hipblas.dll` (built for `amdhip64_6.dll`) with the bundled HIP 7 runtime fails at run time,
+  for example in `hipblasSetStream`. The app reads which HIP runtime a folder's libraries import and skips a ROCm 6 folder,
+  even when it comes first on `PATH`.
+- After installing ROCm 7, restart the app. Reported in [#3](https://github.com/hid276/rust-image-studio/issues/3).
 
 The device name the engine uses (`ROCm0`, `Vulkan0`) is read from `sd-server --list-devices`, and the same placement as on
 NVIDIA is used: weights mirrored in RAM, a 6 GB VRAM budget (less on cards under 8 GB). The
@@ -182,9 +194,9 @@ RTX 3060 Ti only.
 
 | Verified | Environment |
 |---|---|
-| GPU detection, backend choice, device-name parsing, the Linux ROCm zip's `build/bin/` layout, VRAM budget: unit tests | Windows |
+| GPU detection, backend choice, device-name parsing, the Linux ROCm zip's `build/bin/` layout, the Windows ROCm library lookup (ROCm 6 and 7 folders told apart), VRAM budget: unit tests | Windows |
 | The NVIDIA path is unchanged: still `CUDA0`, still the CUDA runtime download, 1024×1024 in 18.3 s / 19.5 s, all tests pass | Windows, RTX 3060 Ti |
-| Archive contents and dependencies of the four AMD zips (HIP DLLs bundled on Windows; Linux ROCm links system ROCm 7; Linux Vulkan glibc floor 2.43) | read from the published archives |
+| Archive contents and dependencies of the four AMD zips (HIP runtime DLLs bundled on Windows, `hipblas.dll` imported but not bundled; Linux ROCm links system ROCm 7; Linux Vulkan glibc floor 2.43) | read from the published archives |
 | **The Vulkan engine path end to end in the app**: device read as `Vulkan0`, Q4_K_M generation at 1024×1024 in 21.5 s (new prompt) / 19.1 s (repeat), ⚡ Fast mode 15.1–15.8 s; the first launch's warm-up took 83 s (shader compilation), later ones 22 s | Windows, upstream Vulkan zip on the **RTX 3060 Ti** (NVIDIA's Vulkan driver, not AMD's) |
 | First-run setup with the Vulkan engine from a local mirror: no CUDA runtime in the list, the zip unpacked into `runtime\vulkan\`, the GPU line and a failed download shown on the setup screen | Windows |
 | APU placement (weights on `Vulkan0`, text encoder from disk, `--max-vram 0`) accepted by the engine and generating correctly, with 8 GB of shared memory simulated | Windows, Vulkan zip on the RTX 3060 Ti |
@@ -192,7 +204,7 @@ RTX 3060 Ti only.
 | Not yet verified | Reason |
 |---|---|
 | Any generation on an AMD Radeon, with either the ROCm or the Vulkan build, and its speed or VRAM behaviour | no AMD GPU available |
-| That the Windows ROCm build works with a given Adrenalin driver version, and the RX 6000/7000/9000 name heuristic for picking it | needs AMD hardware |
+| That the Windows ROCm build works with a given Adrenalin driver version, the RX 6000/7000/9000 name heuristic for picking it, and the `hipblas.dll` lookup against a real ROCm 7 install | needs AMD hardware |
 | Linux ROCm with a real ROCm 7 install; the Linux Vulkan build on Ubuntu 26.04 | needs AMD hardware / a 26.04 system |
 | Speed and memory behaviour on a real APU (shared GTT memory) | needs an APU |
 
