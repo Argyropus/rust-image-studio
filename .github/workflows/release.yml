@@ -130,4 +130,7 @@ jobs:
           files: |
             dist/RustImageStudio-windows-x64.zip
             dist/RustImageStudio-linux-x64.tar.gz
+          # Shown above the generated notes: first-time users meet SmartScreen on the unsigned exe.
+          body: |
+            **Windows:** extract the zip and run `RustImageStudio.exe`. If a blue "Windows protected your PC" window appears, click **More info → Run anyway**. The exe is not code-signed yet, so each new version starts without download history at Microsoft; it is not a virus detection. These files are built from this repository's source by the release workflow. [Details](https://github.com/hid276/rust-image-studio#first-run-security-warning)
           generate_release_notes: true

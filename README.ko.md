@@ -29,6 +29,7 @@ RTX 3060 Ti 8GB 기준 1024×1024 한 장 **약 10~19초** · 4~6GB 카드는 �
 [![Linux용 다운로드](https://img.shields.io/badge/%EB%8B%A4%EC%9A%B4%EB%A1%9C%EB%93%9C-Linux%20x64%20(.tar.gz)-fcc624?style=for-the-badge&logo=linux&logoColor=black)](../../releases/latest/download/RustImageStudio-linux-x64.tar.gz)
 
 **사전 빌드 바이너리 제공** · 압축 해제 후 `RustImageStudio.exe` 실행만으로 바로 사용할 수 있습니다.<br>
+"Windows의 PC 보호" 창이 뜨면 **추가 정보 → 실행**을 누르세요([이유](#처음-실행-시-보안-경고)).<br>
 엔진·모델은 최초 실행 시 자동 프로비저닝 · 전체 UI 레퍼런스: **[메뉴 가이드](docs/GUIDE.ko.md)**
 
 <img src="docs/screenshot-text.png" alt="Rust Image Studio 화면" width="100%">
@@ -82,13 +83,19 @@ Rust Image Studio는 AKAN이 제품 비주얼 제작을 위해 구축한 인하�
 - **여유 RAM이 부족하면** 엔진 시작 시 모델을 모두 RAM에 올리지 않고 텍스트 인코더를 디스크에서 읽습니다(새 프롬프트마다 몇 초 더). Windows가 엔진을 가상메모리로 밀어내 멈추는 것을 막습니다.
 
 1. [`RustImageStudio-windows-x64.zip`](../../releases/latest/download/RustImageStudio-windows-x64.zip)(사전 빌드 바이너리, 약 10MB · 이전 버전은 [Releases](../../releases))을 내려받아 빈 폴더에 압축을 해제합니다.
-2. `RustImageStudio.exe`를 실행합니다. Rust 툴체인·Visual Studio·소스 빌드는 필요하지 않습니다([직접 빌드](#빌드) 시에만 해당).
+2. `RustImageStudio.exe`를 실행합니다. Rust 툴체인·Visual Studio·소스 빌드는 필요하지 않습니다([직접 빌드](#빌드) 시에만 해당). 파란색 "Windows의 PC 보호" 창이 뜨면 [아래 안내](#처음-실행-시-보안-경고)를 참고하세요.
 3. 최초 실행 시 필요한 구성 요소를 **자동으로** 프로비저닝합니다(약 12.7GB, 중단 시 다음 실행에서 이어받기).
    - 필수: Visual C++ 런타임(미설치 시에만, UAC 확인 1회) · 추론 엔진(stable-diffusion.cpp CUDA 12, AMD에서는 ROCm 또는 Vulkan 빌드) · CUDA 런타임(NVIDIA 전용) · 이미지 모델 · 텍스트 인코더 · VAE
    - 선택: 비전 모듈(편집·확장·사진 설명) · 추천 LoRA 3종 · 캡셔닝 엔진(llama.cpp Vulkan)
    - 선택 구성 요소 다운로드에 실패해도 기본 생성 기능은 즉시 사용할 수 있으며, 시작 전 디스크 여유 공간을 사전 검증합니다.
 
 처음 실행하면 영어 UI로 시작하며, 상단 바의 **한 | EN** 토글로 한국어 UI로 전환할 수 있습니다(설정에 영구 저장).
+
+#### 처음 실행 시 보안 경고
+
+처음 `RustImageStudio.exe`를 실행하면 파란색 **"Windows의 PC 보호"** 창(Microsoft Defender SmartScreen)이 뜰 수 있습니다. **추가 정보**를 누른 뒤 **실행**을 누르면 됩니다. 한 번 실행하면 그 파일은 다시 묻지 않습니다.
+
+이 경고는 실행 파일에 아직 코드 서명이 없고, 이 버전의 다운로드 이력이 Microsoft에 쌓이지 않아서 뜹니다. 새 버전마다 이력이 0부터 다시 시작합니다. 바이러스가 발견됐다는 뜻은 아닙니다. 전체 소스는 이 저장소에 공개되어 있고, 릴리스 파일은 모두 GitHub Actions의 [릴리스 워크플로](.github/workflows/release.yml)가 이 소스로 빌드합니다. 실행 전에 [VirusTotal](https://www.virustotal.com)에서 zip 파일을 직접 검사해 볼 수도 있습니다.
 
 ### 디렉터리 구조
 `runtime`과 `models`는 최초 실행 시 자동으로 구성되며, 수동으로 배치해도 무방합니다.

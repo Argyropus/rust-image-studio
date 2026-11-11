@@ -29,6 +29,7 @@ Qwen-Image-2.1 Turbo · fully offline inference · no account, subscription or c
 [![Download for Linux](https://img.shields.io/badge/Download-Linux%20x64%20(.tar.gz)-fcc624?style=for-the-badge&logo=linux&logoColor=black)](../../releases/latest/download/RustImageStudio-linux-x64.tar.gz)
 
 **Prebuilt binaries** · extract the archive and run `RustImageStudio.exe`, no build step required.<br>
+If Windows shows "Windows protected your PC", click **More info → Run anyway** ([why](#first-run-security-warning)).<br>
 Engine and models are provisioned on first launch · full UI reference: **[menu guide](docs/GUIDE.md)**
 
 [Highlights](#highlights) · [Built with Claude](#built-with-claude) · [Features](#everything-in-the-box) · [Under the hood](#under-the-hood) · [Performance](#performance)<br>
@@ -130,7 +131,7 @@ Engineering notes. Every figure below was measured in the app on an RTX 3060 Ti 
 - **Low free RAM:** when too little RAM is free at engine start to keep all weights in memory, the text encoder is read from disk instead (a few seconds more per new prompt) rather than letting Windows page the engine out.
 
 1. Download [`RustImageStudio-windows-x64.zip`](../../releases/latest/download/RustImageStudio-windows-x64.zip) (prebuilt binary, about 10 MB; all versions are on [Releases](../../releases)) and extract it into an empty folder.
-2. Run `RustImageStudio.exe`. No Rust toolchain, Visual Studio or source build is required; those apply only when [building from source](#build-from-source).
+2. Run `RustImageStudio.exe`. No Rust toolchain, Visual Studio or source build is required; those apply only when [building from source](#build-from-source). If a blue "Windows protected your PC" window appears, see [below](#first-run-security-warning).
 3. The first launch provisions all components automatically (about 12.7 GB; downloads resume if interrupted):
 
 | Item | Size | From |
@@ -147,6 +148,12 @@ Engineering notes. Every figure below was measured in the app on an RTX 3060 Ti 
 
 Extras are optional: if one fails, core generation remains available and the component can be fetched again later. The faster INT8 model (7.3 GB) can be added from the model menu.
 Files go next to the exe (`runtime/`, `models/`, `outputs/`). Settings live in `%APPDATA%\Rust Image Studio`.
+
+#### First-run security warning
+
+The first time you run `RustImageStudio.exe`, Windows may show a blue **"Windows protected your PC"** window (Microsoft Defender SmartScreen). Click **More info**, then **Run anyway**. Windows remembers the choice for that file.
+
+The warning means the executable is not code-signed yet and this version has no download history with Microsoft. Every new version starts again from zero. It is not a virus detection. The full source is in this repository, and every release file is built from it by the [release workflow](.github/workflows/release.yml) on GitHub Actions. You can also check the zip on [VirusTotal](https://www.virustotal.com) before running it.
 
 ### AMD Radeon (experimental)
 
