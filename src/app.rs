@@ -782,7 +782,9 @@ impl StudioApp {
                 steps: if mode == GenMode::Outpaint { 8 } else { self.params.steps },
                 live_preview: self.params.live_preview,
                 // The step cache guesses steps; outpainting needs every step to stay seamless.
-                fast: self.params.fast_mode && mode != GenMode::Outpaint,
+                // With a 4-step speed LoRA every step is inside Spectrum's warm-up (4 steps), so
+                // it would skip nothing: leave it off rather than record a mode that did nothing.
+                fast: self.params.fast_mode && mode != GenMode::Outpaint && sigmas.is_none(),
                 output_dir: self.settings.output_dir.clone(),
                 mode,
                 guided,
@@ -928,6 +930,13 @@ impl StudioApp {
         } else {
             self.toast(tf!("설정을 불러왔습니다. LoRA 파일이 없습니다: {missing:?}", "Settings loaded. Missing LoRA files: {missing:?}"), AMBER);
         }
+    }
+
+    /// A speed LoRA (Lightning 4 steps) will run with the next generation: it is enabled, its
+    /// file is there, and the mode keeps it (variation, inpaint and expand drop it).
+    fn lightning_applies(&self) -> bool {
+        matches!(self.params.mode, GenMode::Text | GenMode::Edit)
+            && self.params.loras.iter().any(|l| l.enabled && crate::lora::is_speed(&l.file) && self.lora_files.contains(&l.file))
     }
 
     fn out_dims(&self) -> (u32, u32) {
@@ -3119,6 +3128,22 @@ impl StudioApp {
                        결과가 아주 조금 달라질 수 있습니다(눈으로는 거의 구분되지 않음).";
             if self.params.mode == GenMode::Outpaint {
                 ui.label(RichText::new(t!("확장: 정밀 8단계 (빠른 모드 사용 안 함)", "Expand: precise 8 steps (no fast mode)")).size(12.5).color(TEXT_FAINT));
+            } else if self.lightning_applies() {
+                // Lightning's 4 steps all fall in the step cache's warm-up: it would do nothing.
+                // The switch keeps its setting and works again once Lightning is off.
+                let why = t!(
+                    "Lightning 4단계는 단계가 4개뿐이라, 빠른 모드(Spectrum 캐시)가 건너뛸 단계가 없습니다.\nLightning을 끄면 빠른 모드가 다시 적용됩니다.",
+                    "Lightning has only 4 steps, so fast mode (Spectrum cache) has no step to skip.\nTurn Lightning off and fast mode applies again."
+                );
+                ui.add_enabled_ui(false, |ui| {
+                    let mut on = self.params.fast_mode;
+                    switch(ui, &mut on);
+                    ui.label(RichText::new(t!("⚡ 빠른 모드", "⚡ Fast mode")).size(13.5).color(TEXT_FAINT));
+                })
+                .response
+                .on_disabled_hover_text(why);
+                ui.label(RichText::new(t!("Lightning 사용 중 · 효과 없음", "Lightning on · no effect")).size(12.0).color(TEXT_FAINT))
+                    .on_hover_text(why);
             } else {
             switch(ui, &mut self.params.fast_mode).on_hover_text(tip);
             let on = self.params.fast_mode;
