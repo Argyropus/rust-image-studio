@@ -1,0 +1,102 @@
+name: fork-release
+
+# Fork build: closes the window to the notification area and quits from the tray menu.
+# Manual only, so it never races the upstream `build` workflow that runs on a tag push.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to create (for example v1.2.7-tray.1)
+        required: true
+        default: v1.2.7-tray.1
+      prerelease:
+        description: Mark the release as a pre-release
+        type: boolean
+        default: true
+
+permissions:
+  contents: write # to create the release on the tag
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-fork-win-${{ hashFiles('Cargo.lock') }}
+
+      # Cargo.lock is not committed for this fork (the tray dependency is new), so the build
+      # resolves it here instead of running with --locked.
+      - name: Build
+        run: cargo build --release
+
+      - name: Prove the tray code is in the binary
+        shell: pwsh
+        run: |
+          $exe = "target/release/rust-image-studio.exe"
+          if (-not (Test-Path $exe)) { throw "no $exe" }
+          $bytes = [IO.File]::ReadAllBytes($exe)
+          # tray-icon registers a hidden win32 window whose class name is a UTF-16 literal, so the
+          # name is only matchable in the wide decoding of the image.
+          $wide = [Text.Encoding]::Unicode.GetString($bytes)
+          if ($wide -notmatch "tray_icon_app") { throw "tray icon code is not linked into this build" }
+          "tray code linked into a $($bytes.Length) byte exe"
+
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory dist | Out-Null
+          Copy-Item target/release/rust-image-studio.exe dist/RustImageStudio.exe
+          Copy-Item README.md, README.ko.md, LICENSE, THIRD_PARTY_NOTICES.md, FORK-NOTES.md dist/
+          # The embedded Nanum Gothic font's license, at the path THIRD_PARTY_NOTICES links to.
+          New-Item -ItemType Directory dist/assets/fonts | Out-Null
+          Copy-Item assets/fonts/OFL.txt dist/assets/fonts/
+          # The menu guide the READMEs link to, at the same relative path.
+          New-Item -ItemType Directory dist/docs | Out-Null
+          Copy-Item docs/GUIDE.md, docs/GUIDE.ko.md dist/docs/
+          Compress-Archive -Path dist/* -DestinationPath RustImageStudio-windows-x64-tray.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RustImageStudio-windows-x64-tray
+          path: RustImageStudio-windows-x64-tray.zip
+
+  release:
+    needs: [windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag }}
+          name: ${{ inputs.tag }}
+          prerelease: ${{ inputs.prerelease }}
+          files: dist/RustImageStudio-windows-x64-tray.zip
+          # Shown above the generated notes: first-time users meet SmartScreen on the unsigned exe.
+          body: |
+            **Windows fork build — the close button no longer quits.**
+
+            - **X** hides the window to the notification area. A running generation keeps going.
+            - **Left click** the tray icon (or *Open* in its menu) brings the window back.
+            - **Right click → 종료 (Quit)** ends the process completely. That is now the only way out.
+            - The icon keeps a fixed identity (GUID), so Windows remembers where you put it.
+
+            Everything else is upstream `hid276/rust-image-studio` unchanged. Extract the zip and run `RustImageStudio.exe`.
+            If a blue "Windows protected your PC" window appears, click **More info → Run anyway**: the exe is not code-signed.
+            Built from this fork's source by `.github/workflows/fork-release.yml`.
+          generate_release_notes: false
