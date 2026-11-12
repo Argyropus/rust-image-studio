@@ -85,9 +85,9 @@ From top to bottom: **modes → input image → prompt → aspect/size → seed/
 | Mode | Behavior | Shortcut |
 |---|---|---|
 | **Text** | Generates a new image from the prompt alone (text-to-image). | Ctrl+1 |
-| **Variation** | Regenerates based on the input image's composition and colors (img2img). | Ctrl+2 |
+| **Variation** | Redraws the **whole** input picture: similar composition and colors, new details (img2img). For similar alternatives or a style change. | Ctrl+2 |
 | **Edit** | Edits the input according to a natural-language instruction ("replace the background with a beach"). Up to 3 reference images; requires the vision module. | Ctrl+3 |
-| **Inpaint** | Regenerates only the brushed mask region and preserves the rest. | Ctrl+4 |
+| **Inpaint** | Redraws **only** the brushed area and keeps the rest unchanged. For fixing one spot. | Ctrl+4 |
 | **Expand** | Extends the canvas and continues the scene (outpainting). The source region keeps its native resolution. | Ctrl+5 |
 
 - Adding an image in Text mode switches to Edit (or Variation when the vision module is absent).

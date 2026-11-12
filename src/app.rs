@@ -72,11 +72,11 @@ use crate::engine::OUTPAINT_DEFAULT;
 
 /// Modes in bar order: (mode, label, tooltip with its Ctrl+number shortcut).
 const MODES: [(GenMode, (&str, &str), (&str, &str)); 5] = [
-    (GenMode::Text, ("텍스트", "Text"), ("텍스트로 생성 (Ctrl+1)", "Generate from text (Ctrl+1)")),
-    (GenMode::Variation, ("변형", "Variation"), ("입력 이미지 변형 (Ctrl+2)", "Vary the input image (Ctrl+2)")),
-    (GenMode::Edit, ("편집", "Edit"), ("지시문으로 편집 (Ctrl+3)", "Edit with an instruction (Ctrl+3)")),
-    (GenMode::Inpaint, ("부분수정", "Inpaint"), ("칠한 부분만 수정 (Ctrl+4)", "Repaint only the painted area (Ctrl+4)")),
-    (GenMode::Outpaint, ("확장", "Expand"), ("바깥으로 넓히기 (Ctrl+5)", "Widen outward (Ctrl+5)")),
+    (GenMode::Text, ("텍스트", "Text"), ("글로 설명해서 새 그림 만들기 (Ctrl+1)", "Make a new picture from a description (Ctrl+1)")),
+    (GenMode::Variation, ("변형", "Variation"), ("넣은 그림 전체를 비슷하게 다시 그리기 (Ctrl+2)", "Redraw the whole input picture, similar but different (Ctrl+2)")),
+    (GenMode::Edit, ("편집", "Edit"), ("말로 지시해서 고치기 (Ctrl+3)", "Change the picture by telling it what to do (Ctrl+3)")),
+    (GenMode::Inpaint, ("부분수정", "Inpaint"), ("브러시로 칠한 곳만 다시 그리기 (Ctrl+4)", "Redraw only the area you paint (Ctrl+4)")),
+    (GenMode::Outpaint, ("확장", "Expand"), ("그림 바깥을 넓혀서 이어 그리기 (Ctrl+5)", "Widen the picture and continue the scene (Ctrl+5)")),
 ];
 
 const OUTPAINT_EXAMPLES: [&str; 3] = [
@@ -2208,16 +2208,43 @@ impl StudioApp {
         }
     }
 
-    /// One-line description of the current mode, at the top of the scrolling controls.
+    /// What the current mode does and when to pick it, at the top of the scrolling controls.
+    /// Variation and inpaint read alike, so each says what changes: the whole picture or
+    /// only the painted area.
     fn mode_desc(&self, ui: &mut Ui) {
-        let desc = match self.params.mode {
-            GenMode::Text => t!("프롬프트만으로 새 이미지를 만듭니다.", "Creates a new image from the prompt alone."),
-            GenMode::Variation => t!("입력 이미지의 구도·색감을 바탕으로 다시 그립니다. 강도로 변화량을 조절하세요.", "Redraws based on the input image\'s layout and colors. Strength controls how much changes."),
-            GenMode::Edit => t!("지시문대로 입력 이미지를 고칩니다. 배경 교체, 스타일 변경, 글자 수정 등.", "Changes the input image as instructed: replace the background, change the style, fix text, etc."),
-            GenMode::Inpaint => t!("입력 이미지에서 브러시로 칠한 부분만 다시 그립니다. 나머지는 그대로 유지됩니다.", "Redraws only the area painted with the brush. The rest stays as it is."),
-            GenMode::Outpaint => t!("입력 이미지의 바깥을 넓혀 장면을 이어서 그립니다. 원본 부분은 그대로 유지됩니다.", "Widens the input image and continues the scene. The original part stays as it is."),
+        let (what, when) = match self.params.mode {
+            GenMode::Text => (
+                t!("글로 설명한 그림을 새로 만듭니다.", "Makes a new picture from your description."),
+                t!("이럴 때: 아무것도 없이 처음부터 만들 때", "Use it to start from nothing."),
+            ),
+            GenMode::Variation => (
+                t!(
+                    "넣은 그림 전체를 비슷하게 다시 그립니다. 구도와 색은 비슷하고 세부가 바뀝니다. 강도가 높을수록 많이 바뀝니다.",
+                    "Redraws the whole input picture: similar layout and colors, new details. Higher strength changes more."
+                ),
+                t!(
+                    "이럴 때: 비슷한 다른 버전을 여러 장 뽑을 때, 그림체를 바꿀 때 (예: 사진 → 수채화)",
+                    "Use it for similar alternatives, or to change the style (e.g. photo → watercolor)."
+                ),
+            ),
+            GenMode::Edit => (
+                t!("말로 지시한 대로 고칩니다. 어디를 고칠지는 모델이 알아서 찾습니다.", "Changes the picture as you tell it. The model finds where to change."),
+                t!(
+                    "이럴 때: 배경 바꾸기, 물건 더하기, 글자 바꾸기처럼 무엇을 어떻게 바꿀지 분명할 때",
+                    "Use it when you can say what to change: swap the background, add an item, change text."
+                ),
+            ),
+            GenMode::Inpaint => (
+                t!("브러시로 칠한 곳만 다시 그리고, 나머지는 그대로 둡니다.", "Redraws only the area you paint; everything else stays as it is."),
+                t!("이럴 때: 다 좋은데 한 군데만 고치고 싶을 때", "Use it when the picture is good except for one spot."),
+            ),
+            GenMode::Outpaint => (
+                t!("그림 바깥을 넓혀서 장면을 이어 그립니다. 원래 부분은 그대로 둡니다.", "Widens the picture and continues the scene. The original part stays as it is."),
+                t!("이럴 때: 세로 사진을 가로로 만들거나 여백을 늘릴 때", "Use it to turn a portrait photo into landscape, or to add room around the subject."),
+            ),
         };
-        ui.label(RichText::new(desc).size(12.5).color(TEXT_DIM));
+        ui.label(RichText::new(what).size(12.5).color(TEXT_DIM));
+        ui.label(RichText::new(when).size(12.0).color(TEXT_FAINT));
     }
 
     /// Switches the generation mode and prepares the inputs/mask it needs.
@@ -2849,9 +2876,9 @@ impl StudioApp {
                     } else {
                         match self.params.mode {
                         GenMode::Text => t!("만들고 싶은 이미지를 자세히 묘사하세요.\n주제 → 세부 → 배경 → 조명·분위기 → 촬영/화풍\n예: 밤 시장 포장마차, 노란 간판, 피어오르는 김, 따뜻한 전구 조명", "Describe the image you want in detail.\nSubject → details → background → lighting/mood → camera/style\nExample: A night-market food stall, yellow sign, rising steam, warm string lights"),
-                        GenMode::Variation => t!("결과 이미지 전체를 묘사하세요.\n예: 같은 장면을 따뜻한 수채화 그림으로, 부드러운 붓 터치", "Describe the whole result image.\nExample: the same scene as a warm watercolor painting, soft brush strokes"),
-                        GenMode::Edit => t!("바꿀 것과 유지할 것을 함께 지시하세요.\n예: 배경을 해변으로 바꿔줘. 인물은 그대로 유지해.", "Say what to change and what to keep.\nExample: change the background to a beach. Keep the person as is."),
-                        GenMode::Inpaint => t!("칠한 부분에 들어갈 내용을 묘사하세요.\n예: 초록 몬스테라 화분이 있는 밝은 카페 배경", "Describe what goes into the painted area.\nExample: a bright cafe background with a green monstera plant"),
+                        GenMode::Variation => t!("결과 그림 전체가 어떤 모습이면 좋을지 쓰세요. 바꿀 부분만이 아니라 전체를 씁니다.\n예: 같은 장면을 따뜻한 수채화 그림으로, 부드러운 붓 터치", "Describe how the whole result should look, not just the part to change.\nExample: the same scene as a warm watercolor painting, soft brush strokes"),
+                        GenMode::Edit => t!("무엇을 어떻게 바꾸고 무엇은 그대로 둘지, 말하듯 쓰세요.\n예: 배경을 해변으로 바꿔줘. 인물은 그대로 유지해.", "Say what to change and what to keep, as you would tell a person.\nExample: change the background to a beach. Keep the person as is."),
+                        GenMode::Inpaint => t!("칠한 곳에 무엇을 그릴지만 쓰세요. 그림 전체를 쓸 필요는 없습니다.\n예: 초록 몬스테라 화분이 있는 밝은 카페 배경", "Describe only what goes into the painted area, not the whole picture.\nExample: a bright cafe background with a green monstera plant"),
                         GenMode::Outpaint => t!("넓어진 전체 장면을 묘사하세요. 비워 두면 기본 문구로 자연스럽게 이어 그립니다.\n예: 넓은 밝은 회색 스튜디오, 부드러운 조명", "Describe the whole widened scene. Leave it empty to continue the scene with a default description.\nExample: a wide light grey studio, soft lighting"),
                     }})
                     .desired_rows(6)
