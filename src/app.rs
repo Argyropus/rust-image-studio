@@ -76,7 +76,7 @@ const MODES: [(GenMode, (&str, &str), (&str, &str)); 5] = [
     (GenMode::Variation, ("변형", "Variation"), ("넣은 그림 전체를 비슷하게 다시 그리기 (Ctrl+2)", "Redraw the whole input picture, similar but different (Ctrl+2)")),
     (GenMode::Edit, ("편집", "Edit"), ("말로 지시해서 고치기 (Ctrl+3)", "Change the picture by telling it what to do (Ctrl+3)")),
     (GenMode::Inpaint, ("부분수정", "Inpaint"), ("브러시로 칠한 곳만 다시 그리기 (Ctrl+4)", "Redraw only the area you paint (Ctrl+4)")),
-    (GenMode::Outpaint, ("확장", "Expand"), ("그림 바깥을 넓혀서 이어 그리기 (Ctrl+5)", "Widen the picture and continue the scene (Ctrl+5)")),
+    (GenMode::Outpaint, ("아웃페인팅", "Expand"), ("그림 바깥을 넓혀서 이어 그리기 (Ctrl+5)", "Widen the picture and continue the scene (Ctrl+5)")),
 ];
 
 const OUTPAINT_EXAMPLES: [&str; 3] = [
@@ -2104,7 +2104,7 @@ impl StudioApp {
                     // Expanding: settings that made the border fail more often (speed LoRAs,
                     // fewer steps, CFG, step cache) are fixed and hidden.
                     ui.label(
-                        RichText::new(t!("확장은 실패를 줄이려고 Turbo 8단계 · CFG 1 · LoRA 끔 · 빠른 모드 끔으로 고정합니다 (해당 설정은 숨김).", "Expanding is fixed to Turbo 8 steps · CFG 1 · no LoRA · fast mode off to avoid failures (those settings are hidden)."))
+                        RichText::new(t!("아웃페인팅은 실패를 줄이려고 Turbo 8단계 · CFG 1 · LoRA 끔 · 빠른 모드 끔으로 고정합니다 (해당 설정은 숨김).", "Expanding is fixed to Turbo 8 steps · CFG 1 · no LoRA · fast mode off to avoid failures (those settings are hidden)."))
                             .size(12.0)
                             .color(TEXT_FAINT),
                     );
@@ -2136,7 +2136,7 @@ impl StudioApp {
                 ui.label(RichText::new(t!("단축키", "Shortcuts")).size(12.5).color(TEXT_DIM));
                 egui::Grid::new("help_keys").num_columns(2).spacing([18.0, 6.0]).show(ui, |ui| {
                     row(ui, "Ctrl+Enter", t!("생성 (생성 중이면 대기열에 추가)", "Generate (adds to the queue while generating)"));
-                    row(ui, "Ctrl+1 ~ 5", t!("모드 전환: 텍스트 · 변형 · 편집 · 부분수정 · 확장", "Switch mode: Text · Variation · Edit · Inpaint · Expand"));
+                    row(ui, "Ctrl+1 ~ 5", t!("모드 전환: 텍스트 · 변형 · 편집 · 부분수정 · 아웃페인팅", "Switch mode: Text · Variation · Edit · Inpaint · Expand"));
                     row(ui, "Ctrl+V", t!("클립보드 이미지를 입력으로", "Clipboard image as input"));
                     row(ui, "← / →", t!("갤러리 이전 · 다음 이미지", "Previous · next image in the gallery"));
                     row(ui, "F", t!("크게 보기 (휠 확대 · 드래그 이동)", "Full view (wheel zoom · drag to pan)"));
@@ -2152,7 +2152,7 @@ impl StudioApp {
                     t!("이미지를 창 어디로든 끌어다 놓으면 입력으로 들어갑니다. 이 앱으로 만든 PNG는 생성 설정까지 불러올 수 있습니다.", "Drop an image anywhere on the window to use it as input. PNGs made by this app also restore their generation settings."),
                     t!("갤러리 이미지를 우클릭하면 입력으로 사용 · 설정 불러오기 · 삭제를 바로 할 수 있습니다.", "Right-click a gallery image to use it as input, load its settings, or delete it."),
                     t!("왼쪽의 크기 · 시드 · 고급 · LoRA 카드는 제목을 눌러 접을 수 있고, 접어도 제목 줄에 현재 값이 보입니다.", "The size · seed · advanced · LoRA cards fold when you click their title; the title row still shows the current values."),
-                    t!("확장은 미리보기에서 늘리고 싶은 쪽을 잡아 바깥으로 끌면 됩니다. 프롬프트는 비워도 됩니다.", "To expand, drag the side you want to grow outward in the preview. The prompt can stay empty."),
+                    t!("아웃페인팅은 미리보기에서 늘리고 싶은 쪽을 잡아 바깥으로 끌면 됩니다. 프롬프트는 비워도 됩니다.", "To expand, drag the side you want to grow outward in the preview. The prompt can stay empty."),
                 ] {
                     ui.horizontal_wrapped(|ui| {
                         ui.label(RichText::new("•").color(ACCENT_HOVER));
@@ -2701,7 +2701,7 @@ impl StudioApp {
         match crate::lora::kind(file) {
             Kind::Lightning if matches!(self.params.mode, GenMode::Outpaint | GenMode::Variation | GenMode::Inpaint) => hint(
                 ui,
-                t!("확장·변형·부분 수정에서는 적용되지 않습니다 (일반 8단계로 생성 · 4단계는 테두리가 비거나 대상이 두 번 그려짐)", "Not used for expand, variation or inpaint (normal 8 steps · 4 steps left borders blank or drew the subject twice)"),
+                t!("아웃페인팅·변형·부분 수정에서는 적용되지 않습니다 (일반 8단계로 생성 · 4단계는 테두리가 비거나 대상이 두 번 그려짐)", "Not used for expand, variation or inpaint (normal 8 steps · 4 steps left borders blank or drew the subject twice)"),
                 AMBER,
             ),
             Kind::Lightning => hint(ui, t!("⚡ 4단계로 생성 · 장당 약 12초 (8단계 약 18초) · 2단계보다 디테일이 나음", "⚡ Generates in 4 steps · about 12 s per image (8 steps: about 18 s) · more detail than 2 steps"), ACCENT_HOVER),
@@ -3154,7 +3154,7 @@ impl StudioApp {
             let tip = "Spectrum 단계 캐시: 8단계 중 일부를 예측으로 대신해 약 23% 빨라집니다.\n\
                        결과가 아주 조금 달라질 수 있습니다(눈으로는 거의 구분되지 않음).";
             if self.params.mode == GenMode::Outpaint {
-                ui.label(RichText::new(t!("확장: 정밀 8단계 (빠른 모드 사용 안 함)", "Expand: precise 8 steps (no fast mode)")).size(12.5).color(TEXT_FAINT));
+                ui.label(RichText::new(t!("아웃페인팅: 정밀 8단계 (빠른 모드 사용 안 함)", "Expand: precise 8 steps (no fast mode)")).size(12.5).color(TEXT_FAINT));
             } else if self.lightning_applies() {
                 // Lightning's 4 steps all fall in the step cache's warm-up: it would do nothing.
                 // The switch keeps its setting and works again once Lightning is off.
@@ -3531,7 +3531,7 @@ impl StudioApp {
                                     left_act = Some(Act::Load);
                                 }
                                 // One-click expand: picks the direction, keeps this image's prompt, generates.
-                                let r = bar_button(ui, Icon::Expand, lbl(t!("확장", "Expand")), t!("이 이미지를 넓혀서 바로 생성", "Widen this image and generate right away"), BarKind::Menu);
+                                let r = bar_button(ui, Icon::Expand, lbl(t!("아웃페인팅", "Expand")), t!("이 이미지를 넓혀서 바로 생성", "Widen this image and generate right away"), BarKind::Menu);
                                 egui::Popup::menu(&r).width(220.0).show(|ui| {
                                     ui.label(RichText::new(t!("이 이미지를 넓혀서 바로 생성", "Widen this image and generate right away")).size(12.0).color(TEXT_DIM));
                                     for (label, aspect) in [
@@ -3547,7 +3547,7 @@ impl StudioApp {
                                         }
                                     }
                                     ui.separator();
-                                    if ui.button(t!("⚙ 직접 조절하기…", "⚙ Adjust manually…")).on_hover_text(t!("확장 모드에서 방향별로 조절", "Adjust each side in Expand mode")).clicked() {
+                                    if ui.button(t!("⚙ 직접 조절하기…", "⚙ Adjust manually…")).on_hover_text(t!("아웃페인팅 모드에서 방향별로 조절", "Adjust each side in Expand mode")).clicked() {
                                         expand = Some(Some((-1.0, -1.0)));
                                         ui.close();
                                     }
@@ -3691,7 +3691,7 @@ impl StudioApp {
         let (phase, frac) = if let Some((k, n)) = a.pass.filter(|(_, n)| *n > 1) {
             // Multi-pass expand: progress across all passes.
             let within = if a.total > 0 { a.step as f32 / a.total as f32 } else { 0.0 };
-            (tf!("확장 {k}/{n}단계 · 샘플링 {} / {}", "Expand pass {k}/{n} · sampling {} / {}", a.step, a.total), ((k - 1) as f32 + within) / n as f32)
+            (tf!("아웃페인팅 {k}/{n}단계 · 샘플링 {} / {}", "Expand pass {k}/{n} · sampling {} / {}", a.step, a.total), ((k - 1) as f32 + within) / n as f32)
         } else if a.total == 0 {
             (
                 if a.mode == GenMode::Edit { t!("참조 이미지·지시문 분석 중…", "Analyzing reference images and instruction…") } else { t!("프롬프트 인코딩 중…", "Encoding prompt…") }.to_owned(),
@@ -3905,7 +3905,7 @@ impl StudioApp {
                         if i == 0 || (!*required && items[i - 1].1) {
                             ui.add_space(if i == 0 { 0.0 } else { 6.0 });
                             ui.label(
-                                RichText::new(if *required { t!("필수", "Required") } else { t!("추가 기능 · 편집 · 확장 · 사진 설명 · LoRA", "Extras · edit · expand · photo description · LoRA") })
+                                RichText::new(if *required { t!("필수", "Required") } else { t!("추가 기능 · 편집 · 아웃페인팅 · 사진 설명 · LoRA", "Extras · edit · expand · photo description · LoRA") })
                                     .size(12.0)
                                     .color(TEXT_FAINT),
                             );
@@ -4658,7 +4658,7 @@ fn mode_tag(e: &HistoryEntry) -> String {
         GenMode::Variation => tf!("변형 {:.2} · ", "Variation {:.2} · ", e.strength),
         GenMode::Edit => t!("편집 · ", "Edit · ").to_owned(),
         GenMode::Inpaint => tf!("부분 수정 {:.2} · ", "Inpaint {:.2} · ", e.strength),
-        GenMode::Outpaint => t!("확장 · ", "Expand · ").to_owned(),
+        GenMode::Outpaint => t!("아웃페인팅 · ", "Expand · ").to_owned(),
     };
     let lora = if e.loras.is_empty() { String::new() } else { tf!("LoRA {}개 · ", "{} LoRA · ", e.loras.len()) };
     format!("{fast}{mode}{lora}")
