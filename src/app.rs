@@ -310,6 +310,12 @@ pub struct StudioApp {
     /// Tag of a newer release, once the startup check found one.
     update_tag: Option<String>,
     update_rx: Receiver<String>,
+
+    /// Notification-area icon (Windows). `None` where there is none: the close button then
+    /// ends the app, as before.
+    tray: Option<crate::tray::Tray>,
+    /// The tray asked to quit, so the pending close request must go through.
+    quitting: bool,
 }
 
 impl StudioApp {
@@ -406,6 +412,11 @@ impl StudioApp {
             crate::update::check(update_tx, cc.egui_ctx.clone());
         }
         let selected = history.entries.first().map(|e| e.id);
+        // A self-test run has to end through the window's close button, so it gets no tray icon.
+        let tray = match std::env::var_os("QIS_SHOT_DIR") {
+            Some(_) => None,
+            None => crate::tray::Tray::new(&cc.egui_ctx),
+        };
 
         let mut app = Self {
             settings,
@@ -466,6 +477,8 @@ impl StudioApp {
             dl_rx,
             update_tag: None,
             update_rx,
+            tray,
+            quitting: false,
         };
         app.lora_files = crate::lora::scan(&app.settings.lora_dir());
         // Self-test only: start with the engine log window open (QIS_OPEN=logs).
@@ -528,6 +541,41 @@ impl StudioApp {
 
     fn toast(&mut self, text: impl Into<String>, color: Color32) {
         self.toasts.push(Toast { text: text.into(), color, born: Instant::now() });
+    }
+
+    /// Applies a tray request. Called from `App::logic`, which eframe also runs while the window
+    /// is hidden, so a tray click brings the window back without a frame having been drawn.
+    fn tray_events(&mut self, ctx: &Context) {
+        let Some(action) = self.tray.as_ref().and_then(crate::tray::Tray::take) else { return };
+        match action {
+            crate::tray::TrayAction::Show => {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+                ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                ctx.request_repaint();
+            }
+            crate::tray::TrayAction::Quit => self.quit(ctx),
+        }
+    }
+
+    /// Ends the app: the engine stops, then the close request is let through (`quitting`).
+    fn quit(&mut self, ctx: &Context) {
+        if self.quitting {
+            return;
+        }
+        self.quitting = true;
+        self.engine.shutdown();
+        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        ctx.request_repaint();
+    }
+
+    /// The window's X only hides the app to the tray; the tray menu's Quit item ends it.
+    fn close_to_tray(&mut self, ctx: &Context) {
+        if self.quitting || self.tray.is_none() || !ctx.input(|i| i.viewport().close_requested()) {
+            return;
+        }
+        ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
     }
 
     fn start_engine_if_possible(&mut self) {
@@ -4317,9 +4365,17 @@ impl eframe::App for StudioApp {
         self.drag_test_input(ctx, raw);
     }
 
+    /// Runs before every `ui` pass, and also while the window is hidden (a tray click then
+    /// still reaches the app, because eframe calls this even when no frame is drawn).
+    fn logic(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
+        self.tray_events(ctx);
+    }
+
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         let screen = ui.max_rect();
+        self.tray_events(&ctx);
+        self.close_to_tray(&ctx);
         self.fix_tiny_window(&ctx);
         self.pump(&ctx);
         self.shortcuts(&ctx);

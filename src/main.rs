@@ -15,6 +15,7 @@ mod mask;
 mod metadata;
 mod safety;
 mod theme;
+mod tray;
 mod update;
 
 /// Window title and the name of the settings folder (Windows: %APPDATA%\<APP_NAME>\data;
@@ -37,8 +38,8 @@ fn carry_over_settings() {
     }
 }
 
-/// The app logo (docs/logo.svg rendered to 256×256) for the title bar and taskbar.
-fn window_icon() -> egui::IconData {
+/// The app logo (docs/logo.svg rendered to 256×256) for the title bar, taskbar and tray icon.
+pub fn window_icon() -> egui::IconData {
     let img = image::load_from_memory_with_format(include_bytes!("../assets/icon.png"), image::ImageFormat::Png)
         .expect("bundled icon.png decodes")
         .to_rgba8();
