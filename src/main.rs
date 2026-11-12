@@ -5,7 +5,6 @@
 mod i18n;
 mod app;
 mod autotest;
-mod caption;
 mod config;
 mod download;
 mod engine;

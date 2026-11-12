@@ -20,7 +20,7 @@ pub struct AutoTest {
     taken: Arc<Mutex<Vec<&'static str>>>,
     /// Engine log lines already written to engine_log.txt.
     pub logged: usize,
-    /// Set by the app while background work (a photo description) should finish before
+    /// Set by the app while background work (the first-run downloads) should finish before
     /// the "idle" screenshot.
     pub hold: bool,
 }

@@ -66,10 +66,6 @@ const PROMPT_TIPS: [(&str, &str); 6] = [
     ("편집 지시", "바꿀 것과 유지할 것을 함께 쓰세요: \"배경을 해변으로 바꿔줘. 인물은 그대로 유지해.\""),
 ];
 
-/// Expand prompt when the source has no scene description of its own. Positive words
-/// only: tested negatives such as "액자나 테두리 없음" made the model draw frames.
-use crate::engine::OUTPAINT_DEFAULT;
-
 /// Modes in bar order: (mode, icon, label, tooltip with its Ctrl+number shortcut).
 const MODES: [(GenMode, Icon, (&str, &str), (&str, &str)); 5] = [
     (GenMode::Text, Icon::Type, ("텍스트", "Text"), ("글로 설명해서 새 그림 만들기 (Ctrl+1)", "Make a new picture from a description (Ctrl+1)")),
@@ -77,12 +73,6 @@ const MODES: [(GenMode, Icon, (&str, &str), (&str, &str)); 5] = [
     (GenMode::Edit, Icon::Wand, ("편집", "Edit"), ("말로 지시해서 고치기 (Ctrl+3)", "Change the picture by telling it what to do (Ctrl+3)")),
     (GenMode::Inpaint, Icon::Brush, ("부분수정", "Inpaint"), ("브러시로 칠한 곳만 다시 그리기 (Ctrl+4)", "Redraw only the area you paint (Ctrl+4)")),
     (GenMode::Outpaint, Icon::Expand, ("아웃페인팅", "Expand"), ("그림 바깥을 넓혀서 이어 그리기 (Ctrl+5)", "Widen the picture and continue the scene (Ctrl+5)")),
-];
-
-const OUTPAINT_EXAMPLES: [&str; 3] = [
-    OUTPAINT_DEFAULT,
-    "넓은 밝은 회색 스튜디오 배경, 부드러운 조명, 상품 촬영",
-    "탁 트인 야외 풍경, 맑은 하늘, 같은 시간대의 햇살",
 ];
 
 const INPAINT_EXAMPLES: [&str; 4] = [
@@ -143,12 +133,6 @@ const PROMPT_TIPS_EN: [(&str, &str); 6] = [
     ("Text in the image", "Name the object first, then put the words in double quotes: a wooden sign with the words \"HAPPY DAY\" written in large letters. Shorter text is more accurate."),
     ("Expression or pose won't come out", "Try several seeds, or put the result into Edit mode and say \"make the cat close its eyes\"."),
     ("Edit instructions", "Say what to change and what to keep: \"Change the background to a beach. Keep the person unchanged.\""),
-];
-
-const OUTPAINT_EXAMPLES_EN: [&str; 3] = [
-    crate::engine::OUTPAINT_DEFAULT_EN,
-    "A wide light grey studio background, soft lighting, product photography",
-    "An open outdoor landscape, clear sky, sunlight at the same time of day",
 ];
 
 const INPAINT_EXAMPLES_EN: [&str; 4] = [
@@ -299,25 +283,8 @@ pub struct StudioApp {
     window_resized_at: f64,
     /// Shortcut/tips window (F1 or the ? button).
     show_help: bool,
-    /// Expand-mode prompt filled from the input image's record (may be replaced freely).
-    auto_prompt: Option<String>,
-    /// Photo descriptions from the captioner (request id, result).
-    caption_tx: Sender<(u64, Result<String, String>)>,
-    caption_rx: Receiver<(u64, Result<String, String>)>,
-    caption_seq: u64,
-    /// Request id of the captioner process running now, if any (one at a time: two would
-    /// not fit in VRAM together).
-    captioning: Option<u64>,
-    /// Captioner availability (llama.cpp + model files), re-checked every few seconds
-    /// instead of on every frame.
-    caption_ok: std::cell::Cell<Option<(Instant, bool)>>,
     /// Thumbnails of the built-in phone-case sample (made on first show).
     sample_thumbs: Option<[egui::TextureHandle; 2]>,
-    /// A description is wanted but waits for the image engine to go idle (they share VRAM).
-    caption_wanted: bool,
-    /// Generate was pressed during a description: start it when the description is done.
-    generate_after_caption: bool,
-    egui_ctx: Context,
     /// LoRA being downloaded; switched on when the download finishes.
     dl_lora_file: Option<&'static str>,
     /// Multiple-Angles LoRA camera picker: azimuth index (30° steps), elevation index, close-up.
@@ -384,13 +351,13 @@ impl StudioApp {
             }
             // Self-test only: start in a given mode, to screenshot its left panel.
             if let Ok(m) = std::env::var("QIS_MODE") {
-                params.mode = match m.as_str() {
+                params.enter_mode(match m.as_str() {
                     "variation" => GenMode::Variation,
                     "edit" => GenMode::Edit,
                     "inpaint" => GenMode::Inpaint,
                     "outpaint" => GenMode::Outpaint,
                     _ => GenMode::Text,
-                };
+                });
             }
             // Self-test only: the speed picker's choice (0 quality, 1 faster, 2 fastest), set
             // the way `set_speed` leaves it when the Lightning file is already there.
@@ -434,7 +401,6 @@ impl StudioApp {
         let (img_tx, img_rx) = channel();
         let (dl_tx, dl_rx) = channel();
         let (input_tx, input_rx) = channel();
-        let (caption_tx, caption_rx) = channel();
         let (update_tx, update_rx) = channel();
         if settings.check_updates {
             crate::update::check(update_tx, cc.egui_ctx.clone());
@@ -479,16 +445,7 @@ impl StudioApp {
             window_checked: false,
             window_resized_at: f64::NEG_INFINITY,
             show_help: false,
-            auto_prompt: None,
-            caption_tx,
-            caption_rx,
-            caption_seq: 0,
-            captioning: None,
-            caption_ok: std::cell::Cell::new(None),
             sample_thumbs: None,
-            caption_wanted: false,
-            generate_after_caption: false,
-            egui_ctx: cc.egui_ctx.clone(),
             dl_lora_file: None,
             angle_az: 2,
             angle_el: 0,
@@ -527,7 +484,7 @@ impl StudioApp {
         // Self-test only: open straight into the expand preview with this image.
         if let (Some(_), Ok(path)) = (std::env::var_os("QIS_SHOT_DIR"), std::env::var("QIS_PREVIEW_INPUT")) {
             if let Ok(img) = image::open(&path) {
-                app.params.mode = GenMode::Outpaint;
+                app.params.enter_mode(GenMode::Outpaint);
                 app.inputs = vec![inputs::make_input(&cc.egui_ctx, "preview".into(), img.to_rgba8())];
                 app.params.outpaint = [0.3, 0.1, 0.2, 0.0];
                 app.mask_editing = true;
@@ -536,8 +493,7 @@ impl StudioApp {
         app.params.aspect = crate::config::normalize_aspect(app.params.aspect);
         // Self-test only: load a file through the normal input path in expand mode.
         if let (Some(_), Ok(path)) = (std::env::var_os("QIS_SHOT_DIR"), std::env::var("QIS_LOAD_INPUT")) {
-            app.params.mode = GenMode::Outpaint;
-            app.params.prompt.clear();
+            app.params.enter_mode(GenMode::Outpaint);
             app.inputs.clear();
             inputs::load_file(path.into(), app.input_tx.clone(), cc.egui_ctx.clone());
         }
@@ -634,49 +590,20 @@ impl StudioApp {
         true
     }
 
-    /// Prompt for expanding an image. With the vision module the source is shown to the
-    /// model, so a direction instruction suffices; otherwise the prompt has to describe
-    /// the scene (the source's own prompt when it was a scene description).
-    fn outpaint_prompt(&self, source: Option<&HistoryEntry>) -> String {
-        // The image's own scene description continued the scene best in tests;
-        // edit/inpaint prompts and old expand instructions aren't scene descriptions.
-        match source {
-            Some(e)
-                if matches!(e.mode, GenMode::Text | GenMode::Variation | GenMode::Outpaint)
-                    && !e.prompt.starts_with("1번 이미지")
-                    && !e.prompt.contains("image 1") =>
-            {
-                e.prompt.clone()
-            }
-            _ => crate::engine::outpaint_default().to_owned(),
-        }
-    }
-
     fn engine_usable(&self) -> bool {
         matches!(self.engine_state, EngineState::Ready | EngineState::Loading { .. })
     }
 
     fn generate(&mut self) {
-        // The photo description holds the GPU for ~20 s: start right after it (with the
-        // description it is making as the scene).
-        if self.captioning.is_some() {
-            if !self.generate_after_caption {
-                self.generate_after_caption = true;
-                self.toast(t!("사진 설명이 끝나면 바로 생성합니다 (약 20초)", "Generating as soon as the photo description is done (about 20 s)"), ACCENT_HOVER);
-            }
+        let expanding = self.params.mode == GenMode::Outpaint;
+        if expanding && self.params.outpaint.iter().all(|p| *p <= 0.0) {
+            self.toast(t!("확장할 방향을 하나 이상 정해 주세요 (왼쪽 패널의 빠른 선택)", "Pick at least one direction to expand (quick presets on the left panel)"), AMBER);
             return;
         }
-        if self.params.mode == GenMode::Outpaint {
-            if self.params.outpaint.iter().all(|p| *p <= 0.0) {
-                self.toast(t!("확장할 방향을 하나 이상 정해 주세요 (왼쪽 패널의 빠른 선택)", "Pick at least one direction to expand (quick presets on the left panel)"), AMBER);
-                return;
-            }
-            if self.params.prompt.trim().is_empty() {
-                self.params.prompt = self.outpaint_prompt(None);
-            }
-            // The reference image needs the vision module loaded in the engine.
-        }
-        let prompt = self.params.prompt.trim().to_owned();
+        // Expanding takes no prompt from the user: the engine's instruction goes out with
+        // the fixed scene text. (Replaying one request over 6 seeds, the wording of the
+        // scene text made no difference; see `engine::guided_prompt`.)
+        let prompt = if expanding { crate::engine::outpaint_default().to_owned() } else { self.params.prompt.trim().to_owned() };
         if prompt.is_empty() {
             self.toast(t!("프롬프트를 입력해 주세요", "Please enter a prompt"), AMBER);
             return;
@@ -900,6 +827,15 @@ impl StudioApp {
 
     /// Applies settings read from a dropped PNG's embedded generation record.
     fn apply_restored(&mut self, r: &crate::metadata::Restored) {
+        // Made from an input image (the image itself is not stored in the PNG): inpaint
+        // stays, anything else becomes a variation. Otherwise text, or edit when in edit.
+        let mode = match (r.strength, self.params.mode) {
+            (Some(_), GenMode::Inpaint) => GenMode::Inpaint,
+            (Some(_), _) => GenMode::Variation,
+            (None, GenMode::Edit) => GenMode::Edit,
+            (None, _) => GenMode::Text,
+        };
+        self.params.enter_mode(mode);
         self.params.prompt = r.prompt.clone();
         self.params.negative_prompt = r.negative_prompt.clone();
         self.params.seed = r.seed;
@@ -919,15 +855,11 @@ impl StudioApp {
         self.set_loras(&r.loras);
         let missing: Vec<&String> = r.loras.iter().map(|(f, _)| f).filter(|f| !self.lora_files.contains(f)).collect();
         if let Some(s) = r.strength {
-            // Made from an input image; the image itself is not stored in the PNG.
-            if self.params.mode == GenMode::Inpaint {
+            if mode == GenMode::Inpaint {
                 self.params.inpaint_strength = s;
             } else {
-                self.params.mode = GenMode::Variation;
                 self.params.strength = s;
             }
-        } else if self.params.mode != GenMode::Edit {
-            self.params.mode = GenMode::Text;
         }
         // Size: preset if it matches, otherwise custom.
         self.params.custom_size = true;
@@ -1022,7 +954,8 @@ impl StudioApp {
 
     fn add_input(&mut self, ctx: &Context, name: String, rgba: image::RgbaImage) {
         if self.params.mode == GenMode::Text {
-            self.params.mode = self.default_image_mode();
+            let mode = self.default_image_mode();
+            self.params.enter_mode(mode);
         }
         let input = inputs::make_input(ctx, name, rgba);
         if self.params.mode == GenMode::Outpaint {
@@ -1055,110 +988,12 @@ impl StudioApp {
 
     fn paste_input(&mut self, ctx: &Context) {
         match inputs::from_clipboard() {
-            Ok((name, rgba, prompt)) => {
-                self.add_loaded_input(ctx, name, rgba, prompt);
+            Ok((name, rgba)) => {
+                self.add_input(ctx, name, rgba);
                 self.toast(t!("클립보드 이미지를 입력으로 넣었습니다", "Added the clipboard image as input"), GREEN);
             }
             Err(e) => self.toast(e, AMBER),
         }
-    }
-
-    /// Adds an image from a file or the clipboard, keeping the prompt recorded in it, and
-    /// refreshes the automatic expand prompt.
-    fn add_loaded_input(&mut self, ctx: &Context, name: String, rgba: image::RgbaImage, record: Option<String>) {
-        self.add_input(ctx, name, rgba);
-        // add_input appends (dropping the last one when full), so the new image is last.
-        if let Some(i) = self.inputs.last_mut() {
-            i.record = record;
-        }
-        self.auto_outpaint_prompt(false);
-    }
-
-    /// In expand mode, fills the prompt from the (first) input image: the scene description
-    /// recorded in images made by this app, or a GPU description of a photo. A prompt the
-    /// user typed is never replaced; one filled automatically is swapped or cleared when
-    /// another image comes in. `entering` = just switched into expand mode, where a prompt
-    /// that isn't a scene (an edit instruction left over from another mode) is replaced too.
-    fn auto_outpaint_prompt(&mut self, entering: bool) {
-        if self.params.mode != GenMode::Outpaint || self.inputs.is_empty() {
-            return;
-        }
-        let leftover = entering && scene_from_record(self.params.prompt.trim()).is_none();
-        if !self.prompt_is_ours() && !leftover {
-            return;
-        }
-        let recorded = self.inputs.first().and_then(|i| i.record.clone());
-        match recorded.as_deref().and_then(scene_from_record) {
-            Some(scene) => {
-                self.params.prompt = scene.clone();
-                self.auto_prompt = Some(scene);
-                self.toast(t!("이미지에 저장된 장면 설명으로 프롬프트를 채웠습니다", "Filled the prompt with the scene description saved in the image"), ACCENT_HOVER);
-            }
-            None => {
-                // No usable record (a photo, or an edit instruction): leave it empty — the
-                // engine then adds a generic scene description — and describe the photo
-                // in the background to fill it in.
-                self.params.prompt.clear();
-                self.auto_prompt = None;
-                self.start_caption();
-            }
-        }
-    }
-
-    fn captioner(&self) -> Option<crate::caption::Captioner> {
-        if !self.settings.vision_ok() {
-            return None;
-        }
-        crate::caption::Captioner::find(&self.settings.runtime_dir, &self.settings.active_text_encoder(), &self.settings.vision)
-    }
-
-    /// Cached `captioner().is_some()` for the UI (file checks at most every 3 s).
-    fn caption_ready(&self) -> bool {
-        match self.caption_ok.get() {
-            Some((at, ok)) if at.elapsed() < std::time::Duration::from_secs(3) => ok,
-            _ => {
-                let ok = self.captioner().is_some();
-                self.caption_ok.set(Some((Instant::now(), ok)));
-                ok
-            }
-        }
-    }
-
-    /// No generation running or queued and no model loading: the GPU is free.
-    fn engine_idle(&self) -> bool {
-        self.active.is_none() && self.queue.is_empty() && !matches!(self.engine_state, EngineState::Loading { .. })
-    }
-
-    /// Starts describing the first input image. It runs on the GPU, so it waits while the
-    /// image engine is busy and while another description runs (two at once would not fit
-    /// in VRAM); the newest request is the one whose result fills the prompt.
-    fn start_caption(&mut self) {
-        if !self.caption_ready() || self.inputs.is_empty() {
-            return;
-        }
-        if self.captioning.is_some() || !self.engine_idle() {
-            self.caption_wanted = true;
-            return;
-        }
-        let (Some(c), Some(input)) = (self.captioner(), self.inputs.first()) else { return };
-        self.caption_wanted = false;
-        self.caption_seq += 1;
-        self.captioning = Some(self.caption_seq);
-        c.spawn(self.caption_seq, input.rgba.clone(), self.caption_tx.clone(), self.egui_ctx.clone());
-    }
-
-    /// After the 한/EN switch: swap texts the app filled in itself to the new language.
-    fn on_language_changed(&mut self) {
-        if crate::engine::is_outpaint_default(&self.params.prompt) {
-            self.params.prompt = crate::engine::outpaint_default().to_owned();
-        }
-    }
-
-    /// True when the prompt may be replaced by an automatic one: empty, the generic
-    /// default, or filled automatically earlier (and not edited since).
-    fn prompt_is_ours(&self) -> bool {
-        let current = self.params.prompt.trim();
-        current.is_empty() || crate::engine::is_outpaint_default(current) || self.auto_prompt.as_deref() == Some(current)
     }
 
     /// "🪄 자연스럽게": re-lights a pasted-looking product in the selected image.
@@ -1195,7 +1030,7 @@ impl StudioApp {
         };
         // Reuse the product reference (2nd image) of the edit that made this picture.
         let product = (self.params.mode == GenMode::Edit && self.inputs.len() >= 2).then(|| self.inputs.remove(1));
-        self.params.mode = GenMode::Edit;
+        self.params.enter_mode(GenMode::Edit);
         self.params.batch = false;
         self.params.count = 1;
         // Untested for this edit: run it with the full schedule.
@@ -1437,7 +1272,7 @@ impl StudioApp {
         }
     }
 
-    /// One-click expand from the result toolbar: uses the image and its own prompt.
+    /// One-click expand from the result toolbar.
     fn quick_outpaint(&mut self, ctx: &Context, e: &HistoryEntry, aspect: Option<(f32, f32)>) {
         let img = match image::open(&e.file) {
             Ok(i) => i.to_rgba8(),
@@ -1451,12 +1286,8 @@ impl StudioApp {
             Some((aw, ah)) => crate::config::pads_for_aspect(w, h, aw, ah),
             None => [0.25, 0.25, 0.25, 0.25],
         };
-        self.params.mode = GenMode::Outpaint;
-        self.params.batch = false;
+        self.params.enter_mode(GenMode::Outpaint);
         self.params.count = 1;
-        // With the vision module the source is shown to the model, so a direction
-        // instruction is enough. Without it the prompt must describe the scene.
-        self.params.prompt = self.outpaint_prompt(Some(e));
         let name = e.file.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         self.inputs.clear();
         self.inputs.push(inputs::make_input(ctx, name, img));
@@ -1504,7 +1335,11 @@ impl StudioApp {
     }
 
     fn apply_entry(&mut self, e: &HistoryEntry) {
-        self.params.prompt = e.prompt.clone();
+        self.params.enter_mode(e.mode);
+        // Expanding takes no prompt: its record holds the fixed scene text.
+        if e.mode != GenMode::Outpaint {
+            self.params.prompt = e.prompt.clone();
+        }
         self.params.negative_prompt = e.negative_prompt.clone();
         self.params.seed = e.seed;
         self.params.random_seed = false;
@@ -1512,7 +1347,6 @@ impl StudioApp {
         self.params.step_mode = e.step_mode;
         self.params.steps = e.steps;
         self.params.count = 1;
-        self.params.mode = e.mode;
         self.params.fast_mode = e.fast;
         self.set_loras(&e.loras);
         if e.mode == GenMode::Inpaint {
@@ -1774,36 +1608,9 @@ impl StudioApp {
             }
         }
 
-        while let Ok((id, res)) = self.caption_rx.try_recv() {
-            if self.captioning != Some(id) {
-                continue;
-            }
-            self.captioning = None;
-            if self.caption_wanted {
-                // A newer image came in while this ran: its description starts next and
-                // its result (not this one) fills the prompt.
-                continue;
-            }
-            match res {
-                Ok(text) if self.params.mode == GenMode::Outpaint && self.prompt_is_ours() => {
-                    self.params.prompt = text.clone();
-                    self.auto_prompt = Some(text);
-                    self.toast(t!("사진을 보고 장면 설명을 채웠습니다", "Filled the scene description from the photo"), ACCENT_HOVER);
-                }
-                Ok(_) => {}
-                Err(e) => self.toast(e, AMBER),
-            }
-            if std::mem::take(&mut self.generate_after_caption) {
-                self.generate();
-            }
-        }
-        if self.caption_wanted && self.captioning.is_none() && self.engine_idle() {
-            self.start_caption();
-        }
-
         while let Ok(res) = self.input_rx.try_recv() {
             match res {
-                Ok((name, rgba, prompt)) => self.add_loaded_input(ctx, name, rgba, prompt),
+                Ok((name, rgba)) => self.add_input(ctx, name, rgba),
                 Err(e) => self.toast(tf!("이미지를 열 수 없습니다: {e}", "Can\'t open the image: {e}"), RED),
             }
         }
@@ -1853,7 +1660,6 @@ impl StudioApp {
                     self.dl = DlState::default();
                     self.dl_setup = false;
                     self.lora_files = crate::lora::scan(&self.settings.lora_dir());
-                    self.caption_ok.set(None);
                     if self.settings.core_ready() {
                         if !self.setup_errors.is_empty() {
                             self.toast(
@@ -2042,7 +1848,6 @@ impl StudioApp {
                         d.english = self.settings.english;
                         d.lang_chosen = true;
                     }
-                    self.on_language_changed();
                 }
                 ui.add_space(8.0);
                 match &self.engine_state {
@@ -2157,8 +1962,11 @@ impl StudioApp {
                     self.input_card(ui);
                     ui.add_space(6.0);
                 }
-                self.prompt_card(ui);
-                ui.add_space(6.0);
+                // Expanding takes no prompt: it continues the scene with a fixed description.
+                if self.params.mode != GenMode::Outpaint {
+                    self.prompt_card(ui);
+                    ui.add_space(6.0);
+                }
                 self.setup_card(ui);
                 ui.add_space(6.0);
                 self.details_card(ui);
@@ -2307,15 +2115,12 @@ impl StudioApp {
         if mode == self.params.mode {
             return;
         }
-        self.params.mode = mode;
+        self.params.enter_mode(mode);
         if matches!(mode, GenMode::Variation | GenMode::Inpaint | GenMode::Outpaint) && self.inputs.len() > 1 {
             self.inputs.truncate(1);
         }
         if mode == GenMode::Outpaint {
             self.mask_editing = true;
-            if !self.inputs.is_empty() {
-                self.auto_outpaint_prompt(true);
-            }
         }
         if mode == GenMode::Inpaint {
             let size = self.inputs.first().map(|i| i.size());
@@ -2581,10 +2386,6 @@ impl StudioApp {
         if self.params.outpaint.iter().all(|p| *p <= 0.0) {
             ui.label(RichText::new(t!("확장할 방향을 하나 이상 정하세요", "Pick at least one direction to expand")).size(12.0).color(AMBER));
         }
-        // Old builds filled the prompt with a reference-image instruction; replace it.
-        if self.params.prompt.starts_with("1번 이미지의 장면을") {
-            self.params.prompt = crate::engine::outpaint_default().to_owned();
-        }
         let passes = if guided {
             crate::config::plan_guided_passes(self.params.outpaint, crate::config::GUIDED_MAX_AREA).len()
         } else {
@@ -2605,7 +2406,7 @@ impl StudioApp {
         }
         if guided {
             ui.label(
-                RichText::new(t!("프롬프트는 비워 둬도 됩니다. 새로 채울 부분에 원하는 내용(예: 바다가 보이는 창가)을 쓰면 반영합니다. 배경 자체를 바꾸려면 편집 모드를 쓰세요.", "The prompt can stay empty. Describe what should fill the new area (e.g. a window with a sea view) and it will be used. To change the background itself, use Edit mode."))
+                RichText::new(t!("프롬프트 없이 주변 장면을 자연스럽게 이어 그립니다. 새 내용을 넣거나 배경을 바꾸려면 편집 모드를 쓰세요.", "Continues the surrounding scene; no prompt needed. To add something new or change the background, use Edit mode."))
                     .size(12.0)
                     .color(TEXT_FAINT),
             );
@@ -2770,7 +2571,7 @@ impl StudioApp {
                 ui.horizontal(|ui| {
                     hint(ui, t!("편집 모드에서만 적용됩니다", "Only applies in Edit mode"), AMBER);
                     if ui.small_button(t!("편집 모드로", "To Edit mode")).clicked() {
-                        self.params.mode = GenMode::Edit;
+                        self.params.enter_mode(GenMode::Edit);
                     }
                 });
             }
@@ -2905,28 +2706,13 @@ impl StudioApp {
                         let tpl = lang(TEXT_TEMPLATE, TEXT_TEMPLATE_EN);
                         self.params.prompt = if p.is_empty() { tpl.to_owned() } else { format!("{p}, {tpl}") };
                     }
-                    if self.params.mode == GenMode::Outpaint && !self.inputs.is_empty() && self.caption_ready() {
-                        let busy = self.captioning.is_some() || self.caption_wanted;
-                        let r = chip_button(
-                            ui,
-                            Icon::Image,
-                            t!("사진 설명", "Describe photo"),
-                            t!("입력 사진을 보고 장면 설명을 새로 만들어 프롬프트에 넣습니다 (GPU · 약 20초, 생성 중이면 끝난 뒤에)", "Looks at the input photo and writes a new scene description into the prompt (GPU · about 20 s, after any running generation)"),
-                            !busy,
-                        );
-                        if r.clicked() {
-                            self.params.prompt.clear();
-                            self.auto_prompt = None;
-                            self.start_caption();
-                        }
-                    }
                     if chip_button(ui, Icon::Sparkle, t!("예시", "Example"), t!("예시 프롬프트 넣기 (누를 때마다 다음 예시)", "Insert an example prompt (next one on each click)"), true).clicked() {
                         let list: &[&str] = match self.params.mode {
-                            GenMode::Text => lang(&EXAMPLES[..], &EXAMPLES_EN[..]),
+                            // (The prompt card is hidden when expanding.)
+                            GenMode::Text | GenMode::Outpaint => lang(&EXAMPLES[..], &EXAMPLES_EN[..]),
                             GenMode::Variation => lang(&VARIATION_EXAMPLES[..], &VARIATION_EXAMPLES_EN[..]),
                             GenMode::Edit => lang(&EDIT_EXAMPLES[..], &EDIT_EXAMPLES_EN[..]),
                             GenMode::Inpaint => lang(&INPAINT_EXAMPLES[..], &INPAINT_EXAMPLES_EN[..]),
-                            GenMode::Outpaint => lang(&OUTPAINT_EXAMPLES[..], &OUTPAINT_EXAMPLES_EN[..]),
                         };
                         self.params.prompt = list[self.example_idx % list.len()].to_owned();
                         self.example_idx += 1;
@@ -2939,37 +2725,15 @@ impl StudioApp {
                         t!("한 줄에 프롬프트 하나씩 입력하세요. 위에서부터 순서대로 생성합니다.\n예:\n밤 시장 포장마차, 전구 줄 조명\n봄날 강변의 벚꽃 수채화", "One prompt per line. They are generated from top to bottom.\nExample:\nA night-market food stall, string lights\nCherry blossoms by a river in spring, watercolor")
                     } else {
                         match self.params.mode {
-                        GenMode::Text => t!("만들고 싶은 이미지를 자세히 묘사하세요.\n주제 → 세부 → 배경 → 조명·분위기 → 촬영/화풍\n예: 밤 시장 포장마차, 노란 간판, 피어오르는 김, 따뜻한 전구 조명", "Describe the image you want in detail.\nSubject → details → background → lighting/mood → camera/style\nExample: A night-market food stall, yellow sign, rising steam, warm string lights"),
+                        GenMode::Text | GenMode::Outpaint => t!("만들고 싶은 이미지를 자세히 묘사하세요.\n주제 → 세부 → 배경 → 조명·분위기 → 촬영/화풍\n예: 밤 시장 포장마차, 노란 간판, 피어오르는 김, 따뜻한 전구 조명", "Describe the image you want in detail.\nSubject → details → background → lighting/mood → camera/style\nExample: A night-market food stall, yellow sign, rising steam, warm string lights"),
                         GenMode::Variation => t!("결과 그림 전체가 어떤 모습이면 좋을지 쓰세요. 바꿀 부분만이 아니라 전체를 씁니다.\n예: 같은 장면을 따뜻한 수채화 그림으로, 부드러운 붓 터치", "Describe how the whole result should look, not just the part to change.\nExample: the same scene as a warm watercolor painting, soft brush strokes"),
                         GenMode::Edit => t!("무엇을 어떻게 바꾸고 무엇은 그대로 둘지, 말하듯 쓰세요.\n예: 배경을 해변으로 바꿔줘. 인물은 그대로 유지해.", "Say what to change and what to keep, as you would tell a person.\nExample: change the background to a beach. Keep the person as is."),
                         GenMode::Inpaint => t!("칠한 곳에 무엇을 그릴지만 쓰세요. 그림 전체를 쓸 필요는 없습니다.\n예: 초록 몬스테라 화분이 있는 밝은 카페 배경", "Describe only what goes into the painted area, not the whole picture.\nExample: a bright cafe background with a green monstera plant"),
-                        GenMode::Outpaint => t!("넓어진 전체 장면을 묘사하세요. 비워 두면 기본 문구로 자연스럽게 이어 그립니다.\n예: 넓은 밝은 회색 스튜디오, 부드러운 조명", "Describe the whole widened scene. Leave it empty to continue the scene with a default description.\nExample: a wide light grey studio, soft lighting"),
                     }})
                     .desired_rows(6)
                     .desired_width(f32::INFINITY)
                     .margin(Margin::same(10)),
             );
-            if self.caption_wanted && self.captioning.is_none() {
-                ui.horizontal(|ui| {
-                    ui.spinner();
-                    ui.label(RichText::new(t!("진행 중인 생성이 끝나면 사진 설명을 만듭니다 (GPU를 함께 쓰기 때문)", "The photo description starts when the current generation ends (they share the GPU)")).size(12.0).color(TEXT_DIM));
-                });
-            }
-            if self.captioning.is_some() {
-                ui.horizontal(|ui| {
-                    ui.spinner();
-                    ui.label(
-                        RichText::new(if self.generate_after_caption {
-                            t!("사진을 보고 장면 설명을 만드는 중… 끝나면 바로 생성합니다 (GPU · 약 20초)", "Describing the photo… generation starts right after (GPU · about 20 s)")
-                        } else {
-                            t!("사진을 보고 장면 설명을 만드는 중… (GPU · 약 20초)", "Describing the photo… (GPU · about 20 s)")
-                        })
-                            .size(12.0)
-                            .color(ACCENT_HOVER),
-                    );
-                });
-                ui.ctx().request_repaint_after(std::time::Duration::from_millis(300));
-            }
             ui.horizontal(|ui| {
                 if self.params.batch {
                     let n = self.params.prompt.lines().filter(|l| !l.trim().is_empty()).count();
@@ -2977,10 +2741,8 @@ impl StudioApp {
                 } else {
                     ui.label(RichText::new(tf!("{}자", "{} chars", self.params.prompt.chars().count())).size(12.0).color(TEXT_FAINT));
                 }
-                if self.params.mode != GenMode::Outpaint {
-                    ui.checkbox(&mut self.params.batch, RichText::new(t!("여러 프롬프트", "Multiple prompts")).size(12.0))
-                        .on_hover_text(t!("한 줄에 프롬프트 하나씩 적으면 위에서부터 순서대로 모두 생성합니다.\n'생성 개수'는 프롬프트마다 적용됩니다.", "Write one prompt per line to generate all of them from top to bottom.\n\'Count\' applies to each prompt."));
-                }
+                ui.checkbox(&mut self.params.batch, RichText::new(t!("여러 프롬프트", "Multiple prompts")).size(12.0))
+                    .on_hover_text(t!("한 줄에 프롬프트 하나씩 적으면 위에서부터 순서대로 모두 생성합니다.\n장수는 프롬프트마다 적용됩니다.", "Write one prompt per line to generate all of them from top to bottom.\nThe count applies to each prompt."));
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = 4.0;
                     let text = ui.label(RichText::new(t!("작성 요령", "Tips")).size(12.0).color(ACCENT_HOVER));
@@ -3730,10 +3492,9 @@ impl StudioApp {
                     }
                     if let Some(aspect) = expand {
                         if aspect == Some((-1.0, -1.0)) {
-                            self.params.mode = GenMode::Outpaint;
+                            self.params.enter_mode(GenMode::Outpaint);
                             self.inputs.clear();
                             self.use_as_input(&ctx, &e.file);
-                            self.params.prompt = self.outpaint_prompt(Some(e));
                         } else {
                             self.quick_outpaint(&ctx, e, aspect);
                         }
@@ -3932,7 +3693,7 @@ impl StudioApp {
     }
 
     /// First-run screen: downloads the engine, the CUDA runtime, the models and the extras
-    /// (vision module, recommended LoRAs, photo describer) on its own, with one progress view.
+    /// (vision module, recommended LoRAs) on its own, with one progress view.
     fn onboarding(&mut self, ui: &mut Ui) {
         let items = self.settings.setup_items();
         let total: u64 = items.iter().map(|(s, _)| s.approx_bytes).sum();
@@ -3979,14 +3740,10 @@ impl StudioApp {
                 gpu_notice(ui, &self.settings);
                 // Linux: system libraries the downloads can't bring (the CUDA runtime comes with the engine).
                 #[cfg(target_os = "linux")]
-                for (what, package, required) in crate::config::missing_system_parts(self.settings.backend()) {
+                for (what, package) in crate::config::missing_system_parts(self.settings.backend()) {
                     ui.add_space(4.0);
                     ui.label(
-                        RichText::new(if *required {
-                            tf!("없는 시스템 구성 요소: {} · 이미지 생성 엔진에 필요합니다. 설치: {}", "{} is missing, so the image engine can't run. Install: {}", what, package)
-                        } else {
-                            tf!("없는 시스템 구성 요소: {} · 사진 설명 기능에 필요합니다. 설치: {}", "{} is missing, so photo description won't work. Install: {}", what, package)
-                        })
+                        RichText::new(tf!("없는 시스템 구성 요소: {} · 이미지 생성 엔진에 필요합니다. 설치: {}", "{} is missing, so the image engine can't run. Install: {}", what, package))
                         .size(12.5)
                         .color(AMBER),
                     );
@@ -4014,7 +3771,7 @@ impl StudioApp {
                         if i == 0 || (!*required && items[i - 1].1) {
                             ui.add_space(if i == 0 { 0.0 } else { 6.0 });
                             ui.label(
-                                RichText::new(if *required { t!("필수", "Required") } else { t!("추가 기능 · 편집 · 아웃페인팅 · 사진 설명 · LoRA", "Extras · edit · expand · photo description · LoRA") })
+                                RichText::new(if *required { t!("필수", "Required") } else { t!("추가 기능 · 편집 · 아웃페인팅 · LoRA", "Extras · edit · expand · LoRA") })
                                     .size(12.0)
                                     .color(TEXT_FAINT),
                             );
@@ -4074,8 +3831,8 @@ impl StudioApp {
                 ui.add_space(6.0);
                 ui.label(
                     RichText::new(tf!(
-                        "받는 곳: GitHub (stable-diffusion.cpp · llama.cpp), Hugging Face  ·  저장 위치: {}",
-                        "From: GitHub (stable-diffusion.cpp · llama.cpp), Hugging Face  ·  Saved in: {}",
+                        "받는 곳: GitHub (stable-diffusion.cpp), Hugging Face  ·  저장 위치: {}",
+                        "From: GitHub (stable-diffusion.cpp), Hugging Face  ·  Saved in: {}",
                         base.display()
                     ))
                     .size(12.0)
@@ -4611,10 +4368,16 @@ impl eframe::App for StudioApp {
         if let Some(mut t) = self.autotest.take() {
             let gen_progress = self.active.as_ref().map(|a| a.step);
             if t.wants_generation(self.engine_state == EngineState::Ready) {
+                let mode = match (std::env::var_os("QIS_AUTOINPUT").is_some(), std::env::var("QIS_AUTOMODE").as_deref()) {
+                    (false, _) => GenMode::Text,
+                    (true, Ok("variation")) => GenMode::Variation,
+                    (true, Ok("outpaint")) => GenMode::Outpaint,
+                    (true, _) => GenMode::Edit,
+                };
+                self.params.enter_mode(mode);
                 self.params.prompt = t.prompt.clone().unwrap_or_default();
                 self.params.count = std::env::var("QIS_AUTOCOUNT").ok().and_then(|v| v.parse().ok()).unwrap_or(1);
                 self.params.fast_mode = std::env::var("QIS_FAST").is_ok();
-                self.params.mode = GenMode::Text;
                 // QIS_SEED pins the seed, to compare runs (e.g. two text encoders) image for image.
                 match std::env::var("QIS_SEED").ok().and_then(|v| v.parse::<u64>().ok()) {
                     Some(seed) => {
@@ -4624,11 +4387,6 @@ impl eframe::App for StudioApp {
                     None => self.params.random_seed = true,
                 }
                 if let Ok(path) = std::env::var("QIS_AUTOINPUT") {
-                    self.params.mode = match std::env::var("QIS_AUTOMODE").as_deref() {
-                        Ok("variation") => GenMode::Variation,
-                        Ok("outpaint") => GenMode::Outpaint,
-                        _ => GenMode::Edit,
-                    };
                     if let Ok(img) = image::open(&path) {
                         self.inputs.clear();
                         let (w, h) = (img.width(), img.height());
@@ -4641,11 +4399,6 @@ impl eframe::App for StudioApp {
                                     (p.len() == 4).then(|| [p[0], p[1], p[2], p[3]])
                                 })
                                 .unwrap_or_else(|| crate::config::pads_for_aspect(w, h, 16.0, 9.0));
-                            // The prompt is the scene description; QIS_NO_SCENE tests the
-                            // empty-prompt path (instruction only).
-                            if std::env::var_os("QIS_NO_SCENE").is_some() {
-                                self.params.prompt.clear();
-                            }
                         }
                     }
                 }
@@ -4680,9 +4433,7 @@ impl eframe::App for StudioApp {
             {
                 t.shoot(&ctx, "setup");
             }
-            t.hold = self.captioning.is_some()
-                || self.caption_wanted
-                || self.dl_setup
+            t.hold = self.dl_setup
                 || (std::env::var_os("QIS_LOAD_INPUT").is_some() && self.inputs.is_empty());
             t.tick(&ctx, gen_progress, self.history.entries.len(), idle);
             self.autotest = Some(t);
@@ -4725,38 +4476,6 @@ fn side_cursor(side: u8) -> CursorIcon {
         s if s == R | T || s == L | B => CursorIcon::ResizeNeSw,
         s if s == L || s == R => CursorIcon::ResizeHorizontal,
         _ => CursorIcon::ResizeVertical,
-    }
-}
-
-/// Scene description to reuse from a prompt recorded in an image this app made: the scene
-/// part of an expand prompt, or a plain description. Edit instructions ("…바꿔줘") and the
-/// generic default are not scene descriptions.
-fn scene_from_record(prompt: &str) -> Option<String> {
-    let p = prompt.trim();
-    let scene = if p.starts_with(crate::engine::OUTPAINT_GUIDE) {
-        p.rsplit_once("장면 설명:").map(|(_, s)| s.trim())?
-    } else {
-        p
-    };
-    let instruction = ["해줘", "바꿔", "변경", "줘.", "주세요", "1번 이미지", "2번 이미지", "image 1", "image 2"].iter().any(|w| scene.contains(w))
-        || scene.ends_with('줘');
-    (!scene.is_empty() && !crate::engine::is_outpaint_default(scene) && !instruction && !scene.starts_with("<mva>")).then(|| scene.to_owned())
-}
-
-#[cfg(test)]
-mod scene_tests {
-    use super::scene_from_record;
-
-    #[test]
-    fn picks_scene_descriptions_only() {
-        let scene = "카페 창가 테이블에 앉은 여성, 따뜻한 자연광";
-        assert_eq!(scene_from_record(scene).as_deref(), Some(scene));
-        let expanded = format!("{} 장면 설명: {scene}", crate::engine::OUTPAINT_GUIDE);
-        assert_eq!(scene_from_record(&expanded).as_deref(), Some(scene));
-        let generic = format!("{} 장면 설명: {}", crate::engine::OUTPAINT_GUIDE, crate::engine::OUTPAINT_DEFAULT);
-        assert_eq!(scene_from_record(&generic), None);
-        assert_eq!(scene_from_record("배경을 해변으로 바꿔줘"), None);
-        assert_eq!(scene_from_record("<mva> back view, eye-level shot"), None);
     }
 }
 

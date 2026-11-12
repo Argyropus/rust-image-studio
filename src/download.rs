@@ -188,7 +188,7 @@ fn source_url(src: &ModelSource) -> String {
 /// skipped. Every file is written under a temporary name first and renamed only after the
 /// whole archive came out, so a cut-off extraction never leaves an exe that looks installed
 /// next to missing DLLs / shared libraries. A .tar.gz whose entries all sit in one top
-/// folder (llama.cpp's Linux builds: `llama-b12182/…`) is extracted without that folder.
+/// folder (as release tarballs often do: `name-version/…`) is extracted without that folder.
 fn extract(archive: &Path, dir: &Path) -> Result<()> {
     let name = archive.file_name().unwrap_or_default().to_string_lossy().to_ascii_lowercase();
     let staged = if name.ends_with(".tar.gz") || name.ends_with(".tgz") { stage_tar_gz(archive, dir)? } else { stage_zip(archive, dir)? };
@@ -332,12 +332,12 @@ fn safe_rel(p: &Path) -> Option<PathBuf> {
     (!out.as_os_str().is_empty()).then_some(out)
 }
 
-/// The engine/captioner programs, which must stay runnable even if an archive lost
+/// The engine programs, which must stay runnable even if an archive lost
 /// their permission bits.
 #[cfg(unix)]
 fn is_program(out: &Path) -> bool {
     let name = out.file_name().unwrap_or_default();
-    [crate::config::SERVER_EXE, crate::config::CAPTION_EXE, "sd-cli"].iter().any(|n| name == *n)
+    [crate::config::SERVER_EXE, "sd-cli"].iter().any(|n| name == *n)
 }
 
 /// Applies the archive's permission bits (Unix): executables and shared libraries keep
@@ -396,7 +396,7 @@ mod tests {
         dir.set_entry_type(tar::EntryType::Directory);
         dir.set_mode(0o755);
         dir.set_size(0);
-        b.append_data(&mut dir, "llama-b1/", std::io::empty()).unwrap();
+        b.append_data(&mut dir, "pkg-1/", std::io::empty()).unwrap();
         for (name, data, mode) in entries {
             let mut h = tar::Header::new_gnu();
             h.set_size(data.len() as u64);
@@ -418,20 +418,20 @@ mod tests {
         let a = d.join("pkg.tar.gz");
         tar_gz(
             &a,
-            &[("llama-b1/llama-mtmd-cli", b"bin", 0o755), ("llama-b1/libmtmd.so.0.9.0", b"lib", 0o755), ("llama-b1/sub/x.txt", b"x", 0o644)],
-            &[("llama-b1/libmtmd.so.0", "libmtmd.so.0.9.0")],
+            &[("pkg-1/tool-cli", b"bin", 0o755), ("pkg-1/libtool.so.0.9.0", b"lib", 0o755), ("pkg-1/sub/x.txt", b"x", 0o644)],
+            &[("pkg-1/libtool.so.0", "libtool.so.0.9.0")],
         );
         extract(&a, &d).unwrap();
-        assert_eq!(std::fs::read(d.join("llama-mtmd-cli")).unwrap(), b"bin");
+        assert_eq!(std::fs::read(d.join("tool-cli")).unwrap(), b"bin");
         assert_eq!(std::fs::read(d.join("sub").join("x.txt")).unwrap(), b"x");
-        assert!(!d.join("llama-b1").exists());
-        assert!(!d.join("llama-mtmd-cli.unzipping").exists());
+        assert!(!d.join("pkg-1").exists());
+        assert!(!d.join("tool-cli.unzipping").exists());
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let m = std::fs::metadata(d.join("llama-mtmd-cli")).unwrap().permissions().mode();
+            let m = std::fs::metadata(d.join("tool-cli")).unwrap().permissions().mode();
             assert_eq!(m & 0o111, 0o111);
-            assert_eq!(std::fs::read(d.join("libmtmd.so.0")).unwrap(), b"lib");
+            assert_eq!(std::fs::read(d.join("libtool.so.0")).unwrap(), b"lib");
         }
         let _ = std::fs::remove_dir_all(&d);
     }
@@ -440,9 +440,9 @@ mod tests {
     fn tar_gz_keeps_mixed_top_level_and_skips_unsafe_links() {
         let d = scratch("mixed");
         let a = d.join("pkg.tgz");
-        tar_gz(&a, &[("llama-b1/a", b"a", 0o644), ("b", b"b", 0o644)], &[("evil", "../../outside")]);
+        tar_gz(&a, &[("pkg-1/a", b"a", 0o644), ("b", b"b", 0o644)], &[("evil", "../../outside")]);
         extract(&a, &d).unwrap();
-        assert!(d.join("llama-b1").join("a").is_file());
+        assert!(d.join("pkg-1").join("a").is_file());
         assert!(d.join("b").is_file());
         assert!(d.join("evil").symlink_metadata().is_err());
         let _ = std::fs::remove_dir_all(&d);

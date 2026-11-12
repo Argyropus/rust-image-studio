@@ -67,11 +67,6 @@ pub fn read(path: &Path) -> Option<Restored> {
     from_record(read_record(path)?)
 }
 
-/// Just the prompt recorded in file contents already in memory.
-pub fn prompt_from_bytes(data: &[u8]) -> Option<String> {
-    record_from_bytes(data)?["prompt"].as_str().map(str::to_owned)
-}
-
 fn from_record(v: Value) -> Option<Restored> {
     let prompt = v["prompt"].as_str()?.to_owned();
     let sp = &v["sample_params"];

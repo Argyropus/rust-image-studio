@@ -49,7 +49,7 @@ Run `RustImageStudio.exe` from the extracted directory. The **First-run setup** 
 |---|---|
 | Overall progress bar | Bytes received / total and percent. Closing the window is safe: the next launch **resumes**. |
 | **Required** | Inference engine, CUDA runtime, image model, text encoder, VAE. On Windows the Visual C++ runtime is installed first, only if missing (one UAC approval). On an AMD Radeon (experimental) the engine is the ROCm or Vulkan build instead and there is no CUDA runtime; see [GPU](#6-settings). |
-| **Extras** | Vision module (edit, expand, photo description), the 3 recommended LoRAs, the captioning engine. A failure here leaves core generation available; the component can be retried when its feature is used. |
+| **Extras** | Vision module (edit, expand) and the 3 recommended LoRAs. A failure here leaves core generation available; the component can be retried when its feature is used. |
 | Per-item status | ✔ done · percent · "extracting…" · "installing…" · "failed" |
 | **Stop** | Halts provisioning; it does not resume automatically during the current session. |
 | **⬇ Start download** / **⟳ Try again** | Resumes provisioning after a stop or an error. Partially received files continue via HTTP Range requests. |
@@ -126,12 +126,11 @@ From top to bottom: **modes → input image → prompt → aspect/size/speed →
 - **↔ Back to expand preview**: returns from the result view to the expand preview.
 - To minimize failures, Expand is fixed to Turbo 8 steps · CFG 1 · LoRA off · step cache off: the speed row says so, More settings keeps only the seed, and the LoRA card is hidden.
 
-### 3.3 Prompt card
+### 3.3 Prompt card (hidden in Expand)
 
 | Element | Function |
 |---|---|
 | **Example** | Inserts an example prompt for the current mode, cycling on each click. |
-| **Describe photo** (Expand) | Captions the input image on the GPU and inserts the scene description (about 20 s). Deferred until a running generation finishes. |
 | **Text** | Appends a template for rendering text inside the image. Replace `"YOUR TEXT"` with the desired wording. |
 | **Recent** | Prompt history (15 shown, 30 kept). Click to reuse, ✕ next to an entry to delete it, **Clear all recent prompts** to purge the history. |
 | **✕** | Clears the prompt field. |
@@ -139,7 +138,8 @@ From top to bottom: **modes → input image → prompt → aspect/size/speed →
 | **Multiple prompts** | One prompt per line, generated in order. The image count applies per prompt. |
 | **Tips** | On hover, six prompt-writing tips validated through same-seed comparisons. |
 
-- In Expand, the prompt may be **left empty**: PNGs produced by this app supply the scene description stored in their metadata, and other photos are captioned automatically. Prompts typed by the user are never overwritten.
+- Each mode keeps **its own prompt**: switching tabs brings back the prompt last used in that mode and leaves the other modes' prompts alone.
+- Expand takes no prompt. It continues the surrounding scene with a fixed scene description. To add something new or change the background, use Edit.
 
 ### 3.4 Aspect · Size · Speed card
 
@@ -327,7 +327,7 @@ All data is stored alongside the executable, so the installation is portable and
 
 | Path | Contents |
 |---|---|
-| `runtime\` | Inference engine and CUDA runtime (`runtime\llama\` holds the captioning engine; the AMD builds go in `runtime\rocm\` and `runtime\vulkan\`) |
+| `runtime\` | Inference engine and CUDA runtime (the AMD builds go in `runtime\rocm\` and `runtime\vulkan\`) |
 | `models\` | Image model, text encoder, VAE, vision module |
 | `models\loras\` | LoRA weights. Rescan with ⟳ in the LoRA card after adding files. |
 | `outputs\` | Generated images (`date_time_seed.png`), gallery index (`history.json`), thumbnail cache (`.thumbs`) |

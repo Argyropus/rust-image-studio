@@ -23,7 +23,7 @@ serde_json = "1.0.154"
 trash = "5.3.0"
 ureq = { version = "3", features = ["json"] }
 zip = { version = "9.4.1", default-features = false, features = ["deflate"] }
-# The Linux engine/captioner archives are .tar.gz.
+# The Linux engine archives are .tar.gz.
 flate2 = "1"
 tar = { version = "0.4", default-features = false }
 

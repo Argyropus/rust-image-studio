@@ -41,7 +41,7 @@ RTX 3060 Ti 8GB 기준 1024×1024 한 장 **약 10~19초** · 4~6GB 카드는 �
 - **⚡ 8GB 고속 추론**<br>RTX 3060 Ti 8GB 기준 1024×1024 **약 10~19초**. VRAM 6GB 한도의 고정 메모리 배치에 모델 상주·예열을 더해 반복 생성 지연을 최소화하고, INT8 텐서코어 경로를 지원합니다. VRAM 4~6GB 카드는 더 작은 한도와 타일 디코딩으로 자동 전환됩니다([표](#windows)).
 - **📦 제로 설정 배포**<br>런타임 의존성이 없는 단일 실행 파일(26MB). 최초 실행 시 엔진·모델·LoRA를 이어받기 방식으로 자동 프로비저닝합니다. Python, ComfyUI, 노드 그래프가 필요 없습니다.
 - **🖼️ 원본 보존 확장**<br>가장자리를 드래그해 캔버스를 확장합니다(아웃페인팅). 원본 픽셀은 원 해상도 그대로 재합성하고, 대규모 확장은 다단계 패스로 분할하며, 공백 생성 결과는 자동으로 감지해 재생성합니다.
-- **🦀 네이티브 Rust**<br>Electron·웹뷰 없는 즉시 모드 GPU UI(egui). 상태 변화가 없으면 리페인트하지 않으며, 이미지 엔진과 캡셔닝 엔진의 GPU 작업을 순차 스케줄링해 VRAM 경합을 방지합니다.
+- **🦀 네이티브 Rust**<br>Electron·웹뷰 없는 즉시 모드 GPU UI(egui). 상태 변화가 없으면 리페인트하지 않으며, 엔진 프로세스는 앱과 함께 종료됩니다.
 
 ## Claude AI 기반 개발
 
@@ -86,7 +86,7 @@ Rust Image Studio는 AKAN이 제품 비주얼 제작을 위해 구축한 인하�
 2. `RustImageStudio.exe`를 실행합니다. Rust 툴체인·Visual Studio·소스 빌드는 필요하지 않습니다([직접 빌드](#빌드) 시에만 해당). 파란색 "Windows의 PC 보호" 창이 뜨면 [아래 안내](#처음-실행-시-보안-경고)를 참고하세요.
 3. 최초 실행 시 필요한 구성 요소를 **자동으로** 프로비저닝합니다(약 12.7GB, 중단 시 다음 실행에서 이어받기).
    - 필수: Visual C++ 런타임(미설치 시에만, UAC 확인 1회) · 추론 엔진(stable-diffusion.cpp CUDA 12, AMD에서는 ROCm 또는 Vulkan 빌드) · CUDA 런타임(NVIDIA 전용) · 이미지 모델 · 텍스트 인코더 · VAE
-   - 선택: 비전 모듈(편집·아웃페인팅·사진 설명) · 추천 LoRA 3종 · 캡셔닝 엔진(llama.cpp Vulkan)
+   - 선택: 비전 모듈(편집·아웃페인팅) · 추천 LoRA 3종
    - 선택 구성 요소 다운로드에 실패해도 기본 생성 기능은 즉시 사용할 수 있으며, 시작 전 디스크 여유 공간을 사전 검증합니다.
 
 처음 실행하면 영어 UI로 시작하며, 상단 바의 **한 | EN** 토글로 한국어 UI로 전환할 수 있습니다(설정에 영구 저장).
@@ -103,7 +103,6 @@ Rust Image Studio는 AKAN이 제품 비주얼 제작을 위해 구축한 인하�
 ```
 RustImageStudio.exe
 runtime/   sd-server.exe, stable-diffusion.dll, ggml-cuda.dll, cudart/cublas DLL
-           llama/  (선택: 사진 자동 설명용 llama.cpp Vulkan 빌드)
            rocm/, vulkan/  (AMD Radeon 등에서 쓰는 엔진 빌드, 해당할 때만)
 models/    qwen-image-2.1-turbo-Q4_K_M.gguf
            Qwen3-VL-8B-Instruct-UD-Q4_K_XL.gguf
@@ -139,8 +138,7 @@ stable-diffusion.cpp가 같은 태그(`master-1052-f5df5f8`)로 배포하는 **�
 
 엔진이 쓸 장치 이름(`ROCm0`, `Vulkan0`)은 `sd-server --list-devices` 출력에서 읽으며, 메모리 배치는 NVIDIA와 동일합니다(가중치 RAM
 사본, VRAM 6GB 한도, 8GB 미만 카드는 더 낮게). **INT8 ConvRot 모델**은 NVIDIA CUDA와 CDNA·RDNA3·RDNA3.5·RDNA4 계열의 AMD ROCm에서 선택할 수 있습니다.
-이전 AMD GPU와 Vulkan에서는 Q4_K_M을 사용합니다. Vulkan INT8은 장치 기능 검증이 추가되기 전까지 선택지를 숨깁니다. 속도 '빠르게'와 모든 생성 모드는 그대로 사용할 수 있으며, 사진 설명
-엔진은 원래 Vulkan 빌드라 AMD 드라이버에서도 동작합니다.
+이전 AMD GPU와 Vulkan에서는 Q4_K_M을 사용합니다. Vulkan INT8은 장치 기능 검증이 추가되기 전까지 선택지를 숨깁니다. 속도 '빠르게'와 모든 생성 모드는 그대로 사용할 수 있습니다.
 
 **내장 Radeon (APU).** BIOS가 GPU에 작은 전용 메모리(2GB 이하, 흔히 512MB)만 주는 APU는 실제로는 시스템 RAM을 씁니다. Linux에서는
 GTT(`mem_info_gtt_total`), Windows에서는 공유 GPU 메모리(RAM의 절반)가 실제 GPU 메모리이므로, 앱은 전용 메모리 대신 이 값으로 판단해
@@ -188,7 +186,6 @@ Radeon 사용자분들의 결과 공유(카드, 드라이버, 엔진 종류, 장
 | 추론 엔진: stable-diffusion.cpp CUDA 12 (Linux 빌드) | 약 360MB(추정) | 본 저장소 엔진 릴리스 |
 | CUDA 런타임(cudart, cuBLAS) | 594MB | 본 저장소 엔진 릴리스 |
 | 모델·선택 구성 요소·LoRA | Windows와 동일 | Hugging Face |
-| *선택:* 캡셔닝 엔진 llama.cpp `b12182` Ubuntu Vulkan | 36MB | GitHub (ggml-org/llama.cpp) |
 
 자동 프로비저닝 범위 밖의 시스템 라이브러리는 배포판 패키지로 제공됩니다. 대부분의 데스크톱 환경에는 이미 설치되어 있습니다:
 
@@ -196,7 +193,7 @@ Radeon 사용자분들의 결과 공유(카드, 드라이버, 엔진 종류, 장
 sudo apt install libxkbcommon0 libxkbcommon-x11-0 libwayland-client0 libx11-6 libxcursor1 libxrandr2 libxi6 libvulkan1 libgl1 libegl1 xdg-desktop-portal
 ```
 
-설치 화면은 검증 가능한 항목(NVIDIA 드라이버, glibc, `libstdc++`, 캡셔닝용 `libvulkan`)을 사전 점검하고 필요한 패키지명을 제시합니다.
+설치 화면은 검증 가능한 항목(NVIDIA 드라이버, glibc, `libstdc++`, Vulkan 엔진용 `libvulkan`)을 사전 점검하고 필요한 패키지명을 제시합니다.
 X11 세션에서 `libxkbcommon-x11-0`이 없으면 창 생성 전에 프로세스가 종료됩니다. 파일 대화상자는 `xdg-desktop-portal`과 GTK·GNOME·KDE 백엔드를
 통해 제공됩니다. 한글 폰트(나눔고딕)와 아이콘 폰트는 바이너리에 내장되어 있습니다. 창이 표시되지 않으면 `WGPU_BACKEND=vulkan ./RustImageStudio`(또는 `=gl`)로 렌더링 백엔드를 지정하십시오.
 
@@ -213,7 +210,7 @@ X11 세션에서 `libxkbcommon-x11-0`이 없으면 창 생성 전에 프로세�
 | `cargo check`, `cargo test`(26개), `cargo build --release` 경고 없이 통과. 바이너리는 glibc·libgcc_s에만 동적 링크 | WSL2 Ubuntu 24.04, `-dev` 패키지 미설치 |
 | `.tar.gz` 추출: 최상위 폴더 제거, 심볼릭 링크, 실행 권한, 경로 탐색(path traversal) 차단 | 단위 테스트(Linux·Windows) |
 | `scripts/build-linux-engine.sh`를 CUDA 12.8로 실행해 두 아카이브까지 빌드·패키징. 아카이브 외부 런타임 의존성은 glibc, `libstdc++`, `libgcc`, 드라이버의 `libcuda.so.1`뿐 | WSL2, 단일 GPU 아키텍처(sm_86) 빌드로 엔진 아카이브 68MB(전체 빌드 대비 축소) |
-| 로컬 미러 기반 최초 실행 E2E: 해당 엔진, CUDA 런타임, 실제 llama.cpp `b12182` 아카이브 다운로드·추출(실행 권한 설정, `RUNPATH=$ORIGIN`으로 `sd-server` 인접 CUDA 라이브러리 로드) | WSL2 |
+| 로컬 미러 기반 최초 실행 E2E: 해당 엔진, CUDA 런타임 다운로드·추출(실행 권한 설정, `RUNPATH=$ORIGIN`으로 `sd-server` 인접 CUDA 라이브러리 로드) | WSL2 |
 | 앱이 해당 엔진을 RTX 3060 Ti에서 기동해 1024×1024 생성(24초). 동일 빌드 `sd-cli`로 512×512 생성 | WSL2(Windows 드라이버 경유 CUDA) |
 | 앱 종료 시 엔진 프로세스 동반 종료, `kill -9` 강제 종료 시에도 동일(`PR_SET_PDEATHSIG`) | WSL2 |
 | 앱 창, 설치 화면, 메인 화면의 영어·한국어 렌더링. 내장 한글·아이콘 폰트(글리프 누락 없음) | WSLg(Wayland, `WGPU_BACKEND=vulkan` 필요) |
@@ -222,7 +219,6 @@ X11 세션에서 `libxkbcommon-x11-0`이 없으면 창 생성 전에 프로세�
 |---|---|
 | GitHub에서 `linux-engine` 워크플로 실행(9개 아키텍처, 수 시간 소요), 산출물의 glibc 하한(24.04 로컬 빌드는 2.38 요구, 워크플로는 2.35 호환을 위해 22.04에서 빌드), 게시된 엔진 아카이브의 실제 크기 | 워크플로 미실행 |
 | 설치 화면의 NVIDIA 드라이버·glibc·libvulkan 안내 | Linux 타깃 컴파일만 확인, 해당 구성 요소가 없는 환경에서는 미확인 |
-| Linux NVIDIA Vulkan 드라이버에서의 캡셔닝 실행 | 네이티브 드라이버 필요 |
 | 실제 GNOME/KDE 환경의 파일 대화상자, 클립보드, 휴지통, "폴더에서 보기" | WSLg에 데스크톱 포털·파일 관리자 부재 |
 | Linux 성능(본 문서의 수치는 모두 Windows 실측값) | WSL2 수치는 대표성 없음 |
 
@@ -258,14 +254,9 @@ WSLg 알려진 이슈: 간헐적으로(엔진 로딩 중 관측) 창이 640×480
 - 일부 시드에서 모델이 회색 플레이스홀더를 그대로 복제하거나(회색·보라 단색 영역, 흐린 칸막이) 비워 두는 실패 모드가 있습니다.
   이에 신규 영역의 공백을 자동 감지해 다른 시드로 재생성합니다(최대 2회).
   감지 알고리즘은 테스트 샘플 28장(실패 8, 성공 20)을 모두 정확히 분류했으며, 민무늬 벽·흰 스튜디오 배경은 실패로 오판하지 않습니다.
-- 아웃페인팅 모드에 이미지를 투입하면 프롬프트를 자동 생성합니다. 본 앱이 생성한 PNG는 메타데이터에 저장된 장면 설명을 즉시 재사용하고,
-  일반 사진은 `runtime/llama/llama-mtmd-cli.exe`(Linux: `llama-mtmd-cli`, llama.cpp b12182 Vulkan 빌드)가 Qwen3-VL 텍스트 인코더 + 비전 모듈로
-  **GPU**에서 장면을 캡셔닝합니다(이미지 엔진 상주 상태에서 약 18~19초, 대부분 가중치 로딩 시간이며 이후 생성 속도에는 영향 없음).
-  최대 약 7.5GB VRAM을 점유하므로 이미지 엔진 유휴 시에만 실행하며, 대기 중 요청된 생성은 캡셔닝 완료 직후 자동으로 시작합니다.
-  사용자가 직접 입력한 프롬프트는 덮어쓰지 않으며, 프롬프트 카드의 "🖼 사진 설명" 버튼으로 재생성할 수 있습니다.
+- 아웃페인팅은 프롬프트를 받지 않습니다. 고정 지시문에 기본 장면 문구("같은 공간이 넓게 보이는 한 장의 사진, 같은 배경, 같은 조명과 색감…")를 붙여 주변 장면을 이어 그립니다.
+  같은 요청을 6개 시드로 재생한 테스트에서 장면 문구가 있으면 빈 테두리 발생이 2회에서 1회로 줄었고, 문구의 표현을 바꿔도 결과는 같았습니다.
 - 아웃페인팅 모드에서는 비율 카드의 비율 선택을 숨깁니다(결과 비율은 확장 범위로 결정되며 해상도만 선택).
-- 프롬프트는 생략할 수 있습니다(기본 장면 문구 자동 적용). 장면 문구를 지정하면 빈 테두리 발생률이 절반으로 감소했습니다.
-  "넓은 창 너머로 푸른 바다"처럼 신규 영역에 원하는 내용을 기술하면 반영됩니다.
 - 아웃페인팅에서는 속도가 정밀 8단계로 고정됩니다(고속 LoRA와 단계 캐시를 쓰지 않습니다).
 - 비전 모듈이 없으면 레거시 방식(경계 색상 연장 + 15% 단위 반복 인페인팅)으로 확장합니다.
 
@@ -325,5 +316,5 @@ build
 - 모델·엔진·LoRA는 각각의 라이선스를 따릅니다. 모델은 Qwen Research License가 적용되므로 상업적 이용 전 반드시 확인하십시오.
   상세 내용은 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)를 참고하십시오.
 
-*애플리케이션은 Rust로 작성되었으며, 이미지 생성 추론은 앱이 내려받아 제어하는 stable-diffusion.cpp와 llama.cpp(C/C++, CUDA/Vulkan)에서 실행됩니다.*
-Alibaba/Qwen, stable-diffusion.cpp, llama.cpp와는 무관한 독립 프로젝트입니다.
+*애플리케이션은 Rust로 작성되었으며, 이미지 생성 추론은 앱이 내려받아 제어하는 stable-diffusion.cpp(C/C++, CUDA/ROCm/Vulkan)에서 실행됩니다.*
+Alibaba/Qwen, stable-diffusion.cpp와는 무관한 독립 프로젝트입니다.

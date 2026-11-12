@@ -36,10 +36,8 @@ pub const VISION_SOURCE: ModelSource = ModelSource {
 
 /// File name of the engine executable (`sd-server.exe` on Windows, `sd-server` elsewhere).
 pub const SERVER_EXE: &str = if cfg!(windows) { "sd-server.exe" } else { "sd-server" };
-/// File name of the photo describer's executable.
-pub const CAPTION_EXE: &str = if cfg!(windows) { "llama-mtmd-cli.exe" } else { "llama-mtmd-cli" };
 
-/// Microsoft Visual C++ 2015–2022 Redistributable (x64): the engine and describer DLLs
+/// Microsoft Visual C++ 2015–2022 Redistributable (x64): the engine DLLs
 /// need MSVCP140 / VCRUNTIME140_1 / VCOMP140, which a clean Windows install lacks.
 /// The setup downloads Microsoft's installer and runs it (one UAC prompt).
 #[cfg(windows)]
@@ -907,14 +905,14 @@ pub fn can_load_library(name: &str) -> bool {
     true
 }
 
-/// What the Linux system lacks for parts of the app with the engine build of `backend`:
-/// (what, the Ubuntu/Debian package to install, required for image generation). Our CUDA
+/// What the Linux system lacks to run the engine build of `backend`: (what, the
+/// Ubuntu/Debian package to install). Our CUDA
 /// archive brings its own CUDA runtime; stable-diffusion.cpp's ROCm build needs the ROCm 7
 /// libraries from the system, and its Vulkan build is made on Ubuntu 26.04. Checked once
 /// per run and backend.
 #[cfg(target_os = "linux")]
-pub fn missing_system_parts(backend: GpuBackend) -> &'static [(&'static str, &'static str, bool)] {
-    type Parts = Vec<(&'static str, &'static str, bool)>;
+pub fn missing_system_parts(backend: GpuBackend) -> &'static [(&'static str, &'static str)] {
+    type Parts = Vec<(&'static str, &'static str)>;
     static MISSING: [std::sync::OnceLock<Parts>; 3] = [const { std::sync::OnceLock::new() }; 3];
     let slot = match backend {
         GpuBackend::Rocm => 1,
@@ -938,28 +936,26 @@ pub fn missing_system_parts(backend: GpuBackend) -> &'static [(&'static str, &'s
                     _ => "glibc 2.35+",
                 },
                 distro,
-                true,
             ));
         }
         if !can_load_library("libstdc++.so.6") {
-            v.push(("libstdc++.so.6", "libstdc++6", true));
+            v.push(("libstdc++.so.6", "libstdc++6"));
         }
         if backend != GpuBackend::Cuda && !can_load_library("libgomp.so.1") {
-            v.push(("libgomp.so.1", "libgomp1", true));
+            v.push(("libgomp.so.1", "libgomp1"));
         }
         if backend == GpuBackend::Rocm {
             if !Path::new("/dev/kfd").exists() {
-                v.push(("/dev/kfd", "amdgpu kernel driver (user in the 'render' group)", true));
+                v.push(("/dev/kfd", "amdgpu kernel driver (user in the 'render' group)"));
             }
             for (lib, pkg) in [("libamdhip64.so.7", "ROCm 7 (hip-runtime-amd)"), ("libhipblas.so.3", "ROCm 7 (hipblas)"), ("librocblas.so.5", "ROCm 7 (rocblas)")] {
                 if !can_load_library(lib) {
-                    v.push((lib, pkg, true));
+                    v.push((lib, pkg));
                 }
             }
         }
-        if !can_load_library("libvulkan.so.1") {
-            // The photo describer always uses Vulkan; the Vulkan engine needs it too.
-            v.push(("libvulkan.so.1", "libvulkan1", backend == GpuBackend::Vulkan));
+        if backend == GpuBackend::Vulkan && !can_load_library("libvulkan.so.1") {
+            v.push(("libvulkan.so.1", "libvulkan1"));
         }
         v
     })
@@ -1098,30 +1094,6 @@ pub fn engine_source(backend: GpuBackend) -> &'static ModelSource {
         GpuBackend::Cuda | GpuBackend::Auto => &ENGINE_SOURCE,
     }
 }
-
-/// llama.cpp Vulkan build: runs the photo describer (llama-mtmd-cli) on the GPU.
-#[cfg(windows)]
-pub const CAPTION_SOURCE: ModelSource = ModelSource {
-    label: "사진 설명 엔진 (llama.cpp, Vulkan)",
-    label_en: "Photo describer (llama.cpp, Vulkan)",
-    file: "llama-b12182-bin-win-vulkan-x64.zip",
-    url: "https://github.com/ggml-org/llama.cpp/releases/download/b12182/llama-b12182-bin-win-vulkan-x64.zip",
-    approx_bytes: 37_709_766,
-    unzip: true,
-};
-
-/// The same llama.cpp release, Ubuntu x64 Vulkan build (a .tar.gz with one top folder,
-/// `llama-b12182/`, which extraction strips). Needs `libvulkan1` and the GPU driver's
-/// Vulkan ICD at run time.
-#[cfg(not(windows))]
-pub const CAPTION_SOURCE: ModelSource = ModelSource {
-    label: "사진 설명 엔진 (llama.cpp, Vulkan)",
-    label_en: "Photo describer (llama.cpp, Vulkan)",
-    file: "llama-b12182-bin-ubuntu-vulkan-x64.tar.gz",
-    url: "https://github.com/ggml-org/llama.cpp/releases/download/b12182/llama-b12182-bin-ubuntu-vulkan-x64.tar.gz",
-    approx_bytes: 35_871_160,
-    unzip: true,
-};
 
 impl ModelSource {
     /// The label in the UI language.
@@ -1387,7 +1359,6 @@ impl Settings {
             f if f == ENGINE_SOURCE.file || f == CUDART_SOURCE.file => self.runtime_dir.join(f),
             f if f == ENGINE_ROCM_SOURCE.file => self.engine_dir_for(GpuBackend::Rocm).join(f),
             f if f == ENGINE_VULKAN_SOURCE.file => self.engine_dir_for(GpuBackend::Vulkan).join(f),
-            f if f == CAPTION_SOURCE.file => self.runtime_dir.join("llama").join(f),
             f if crate::lora::RECOMMENDED.iter().any(|(s, _)| s.file == f) => self.lora_dir().join(f),
             f => self.model_path_for(f),
         }
@@ -1414,14 +1385,13 @@ impl Settings {
                     || self.server_exe() != local
                     || (local.is_file() && !self.runtime_dir.join("libstable-diffusion.so").is_file())
             }
-            f if f == CAPTION_SOURCE.file => self.runtime_dir.join("llama").join(CAPTION_EXE).is_file(),
             _ => self.dest_for(src).is_file(),
         }
     }
 
     /// Everything the first run fetches, in download order, with whether it is required.
     /// Required: the engine for this GPU (+ the CUDA runtime on NVIDIA) + the three model
-    /// files. Then the extras that the edit/expand/describe features and the LoRA card use.
+    /// files. Then the extras that the edit/expand features and the LoRA card use.
     /// On Linux the CUDA engine and runtime come from this repository's own release (see
     /// `linux_engine_release!`); Windows also installs the Visual C++ runtime first.
     pub fn setup_items(&self) -> Vec<(&'static ModelSource, bool)> {
@@ -1436,7 +1406,6 @@ impl Settings {
         v.extend(self.required_models().into_iter().map(|m| (m, true)));
         v.push((&VISION_SOURCE, false));
         v.extend(crate::lora::RECOMMENDED.iter().map(|(s, _)| (*s, false)));
-        v.push((&CAPTION_SOURCE, false));
         v
     }
 
@@ -1846,7 +1815,11 @@ pub struct GenParams {
     pub strength: f32,
     /// In image modes, take the output aspect ratio from the first input image.
     pub follow_input_aspect: bool,
+    /// The prompt of the current mode.
     pub prompt: String,
+    /// The other modes' prompts, by `GenMode` order: each mode keeps its own (see `enter_mode`).
+    /// The current mode's slot is empty while its text is in `prompt`.
+    pub mode_prompts: [String; 5],
     pub negative_prompt: String,
     pub aspect: usize,
     pub size: usize,
@@ -1880,6 +1853,7 @@ impl Default for GenParams {
             strength: 0.6,
             follow_input_aspect: true,
             prompt: String::new(),
+            mode_prompts: Default::default(),
             negative_prompt: String::new(),
             aspect: 0,
             size: 1,
@@ -1948,6 +1922,29 @@ mod aspect_tests {
     }
 
     #[test]
+    fn each_mode_keeps_its_own_prompt() {
+        use super::GenMode::*;
+        let mut p = super::GenParams { prompt: "a red fox".into(), ..Default::default() };
+        p.enter_mode(Edit);
+        assert_eq!(p.prompt, "", "a mode entered for the first time starts empty");
+        p.prompt = "make it snow".into();
+        p.enter_mode(Inpaint);
+        p.prompt = "a blue door".into();
+        p.enter_mode(Text);
+        assert_eq!(p.prompt, "a red fox");
+        p.enter_mode(Edit);
+        assert_eq!(p.prompt, "make it snow");
+        p.enter_mode(Edit);
+        assert_eq!(p.prompt, "make it snow", "entering the current mode changes nothing");
+        p.enter_mode(Inpaint);
+        assert_eq!(p.prompt, "a blue door");
+        // Settings saved before this (one shared prompt) load with empty slots.
+        let old: super::GenParams = serde_json::from_str(r#"{"mode":"Variation","prompt":"watercolor"}"#).unwrap();
+        assert_eq!((old.mode == Variation, old.prompt.as_str()), (true, "watercolor"));
+        assert!(old.mode_prompts.iter().all(String::is_empty));
+    }
+
+    #[test]
     fn slow_gpu_defaults_pick_fast_size_and_lightning() {
         let mut p = super::GenParams::default();
         p.size = 2;
@@ -1981,6 +1978,17 @@ pub fn size_labels() -> Vec<&'static str> {
 }
 
 impl GenParams {
+    /// Switches the mode. Every mode has its own prompt: the current text is put away
+    /// under the mode being left, and the new mode's last text comes back.
+    pub fn enter_mode(&mut self, mode: GenMode) {
+        if mode == self.mode {
+            return;
+        }
+        self.mode_prompts[self.mode as usize] = std::mem::take(&mut self.prompt);
+        self.prompt = std::mem::take(&mut self.mode_prompts[mode as usize]);
+        self.mode = mode;
+    }
+
     /// Defaults for a GTX card: the Small size (736×736 square) and Lightning 4 steps,
     /// about 4× less work than 1024² in 8 steps.
     pub fn apply_slow_gpu_defaults(&mut self) {

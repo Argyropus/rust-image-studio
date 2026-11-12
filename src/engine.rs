@@ -1563,7 +1563,7 @@ fn split_args(s: &str) -> Vec<String> {
     out
 }
 
-/// Puts a helper process (sd-server, the photo captioner) in the app's Job Object, so
+/// Puts a helper process (sd-server) in the app's Job Object, so
 /// Windows kills it if this app exits or crashes instead of leaving an orphan holding
 /// gigabytes of VRAM/RAM. One job for the whole app: its handle is created once and
 /// closes (killing the members) only when the app ends.
@@ -1596,8 +1596,8 @@ pub fn kill_with_parent(child: &Child) {
 
 /// Linux counterpart of `kill_with_parent`: the kernel sends the child SIGKILL when the
 /// thread that spawned it ends (`PR_SET_PDEATHSIG`), which includes this app exiting or
-/// crashing. Both callers spawn from a thread that lives as long as the child (the engine
-/// worker; the captioner's own thread, which waits for it), so it never fires early.
+/// crashing. The caller spawns from a thread that lives as long as the child (the engine
+/// worker), so it never fires early.
 #[cfg(target_os = "linux")]
 pub fn die_with_parent(cmd: &mut Command) {
     use std::os::unix::process::CommandExt;

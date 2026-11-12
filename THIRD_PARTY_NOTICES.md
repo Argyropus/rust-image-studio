@@ -3,7 +3,7 @@
 Rust Image Studio's own source code is MIT-licensed (see [LICENSE](LICENSE)).
 This repository does **not** contain any model weights or inference binaries. On first run the app
 downloads the model files from Hugging Face and the inference engines from GitHub releases (upstream's
-for Windows and the photo describer; this repository's own `engine-sd-master-1052-f5df5f8` release for
+for Windows; this repository's own `engine-sd-master-1052-f5df5f8` release for
 the Linux engine, built by `.github/workflows/linux-engine.yml`). Each keeps its own license, listed below.
 Check them before any commercial use.
 
@@ -31,7 +31,6 @@ Check them before any commercial use.
 | stable-diffusion.cpp `master-1052-f5df5f8` (Windows: `sd-server.exe`, `stable-diffusion.dll`, ggml DLLs from upstream's release zip; Linux: `sd-server`, `libstable-diffusion.so`, ggml libraries built from that tag by this repository's CI, unmodified; the archive includes the MIT license texts) | [leejet/stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp), [ggml](https://github.com/ggml-org/ggml) | MIT |
 | stable-diffusion.cpp `master-1052-f5df5f8` AMD builds, only when an AMD GPU or Vulkan is used (`runtime/rocm`: upstream's Windows ROCm 10.1.0 zip or Linux Ubuntu 24.04 ROCm zip; `runtime/vulkan`: upstream's Windows or Linux Ubuntu 26.04 Vulkan zip; unmodified) | [leejet/stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp), [ggml](https://github.com/ggml-org/ggml) | MIT |
 | AMD HIP runtime DLLs inside upstream's Windows ROCm zip (`amdhip64_7.dll`, `amd_comgr.dll`, `rocm_kpack.dll`), downloaded with that zip, not redistributed by this repository | AMD ROCm | AMD's ROCm license terms for those components (e.g. HIP runtime: MIT; Code Object Manager: University of Illinois/NCSA) |
-| llama.cpp `b12182` (`runtime/llama`, optional photo captioner; Windows Vulkan zip, Linux Ubuntu Vulkan tarball) | [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp) | MIT |
 | Microsoft Visual C++ 2015–2022 Redistributable (Windows only, installed by the first-run setup when missing; downloaded from `aka.ms/vs/17/release/vc_redist.x64.exe`) | Microsoft | Microsoft Software License Terms (Visual C++ Redistributable) |
 | NVIDIA CUDA runtime (Windows: `cudart64_12.dll`, `cublas64_12.dll`, `cublasLt64_12.dll` from upstream's release; Linux: `libcudart.so.12`, `libcublas.so.12`, `libcublasLt.so.12` from CUDA 12.8, in this repository's engine release) | NVIDIA | NVIDIA CUDA Toolkit EULA (these libraries are listed as redistributable in its Attachment A) |
 

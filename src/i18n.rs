@@ -1,5 +1,5 @@
 //! UI language (English default, Korean). The choice is a process-wide flag so any
-//! thread (UI, engine worker, captioner) can pick its strings without passing it around.
+//! thread (UI, engine worker) can pick its strings without passing it around.
 //!
 //! `t!("한국어", "English")` picks a `&'static str`; `tf!("…{x}…", "…{x}…", args…)` is
 //! `format!` with one format string per language (inline `{x}` captures work in both).

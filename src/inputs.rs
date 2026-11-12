@@ -12,8 +12,6 @@ pub struct InputImage {
     pub name: String,
     pub rgba: Arc<image::RgbaImage>,
     pub tex: TextureHandle,
-    /// Prompt recorded in the file, when this app made it (None for photos/clipboard).
-    pub record: Option<String>,
 }
 
 impl InputImage {
@@ -22,9 +20,8 @@ impl InputImage {
     }
 }
 
-/// Decoded image waiting to be turned into an `InputImage` on the UI thread, with the
-/// prompt recorded in the file if this app made it.
-pub type Loaded = Result<(String, image::RgbaImage, Option<String>), String>;
+/// Decoded image waiting to be turned into an `InputImage` on the UI thread.
+pub type Loaded = Result<(String, image::RgbaImage), String>;
 
 pub fn is_image_path(p: &std::path::Path) -> bool {
     p.extension()
@@ -56,11 +53,9 @@ pub fn export_image(src: &std::path::Path, dest: &std::path::Path) -> anyhow::Re
 pub fn load_file(path: PathBuf, tx: Sender<Loaded>, ctx: Context) {
     std::thread::spawn(move || {
         let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-        // One read: decode and look for the recorded prompt from the same bytes.
-        let res = std::fs::read(&path).map_err(|e| format!("{name}: {e}")).and_then(|bytes| {
-            let prompt = crate::metadata::prompt_from_bytes(&bytes);
-            image::load_from_memory(&bytes).map(|img| (name.clone(), img.to_rgba8(), prompt)).map_err(|e| format!("{name}: {e}"))
-        });
+        let res = std::fs::read(&path)
+            .map_err(|e| format!("{name}: {e}"))
+            .and_then(|bytes| image::load_from_memory(&bytes).map(|img| (name.clone(), img.to_rgba8())).map_err(|e| format!("{name}: {e}")));
         let _ = tx.send(res);
         ctx.request_repaint();
     });
@@ -71,7 +66,7 @@ pub fn from_clipboard() -> Loaded {
     let img = cb.get_image().map_err(|_| t!("클립보드에 이미지가 없습니다", "No image on the clipboard").to_owned())?;
     let rgba = image::RgbaImage::from_raw(img.width as u32, img.height as u32, img.bytes.into_owned())
         .ok_or_else(|| t!("클립보드 이미지 형식을 읽을 수 없습니다", "Can't read the clipboard image format").to_owned())?;
-    Ok((t!("클립보드", "Clipboard").to_owned(), rgba, None))
+    Ok((t!("클립보드", "Clipboard").to_owned(), rgba))
 }
 
 pub fn make_input(ctx: &Context, name: String, rgba: image::RgbaImage) -> InputImage {
@@ -86,7 +81,7 @@ pub fn make_input(ctx: &Context, name: String, rgba: image::RgbaImage) -> InputI
         crate::engine::rgba_to_color(&rgba)
     };
     let tex = ctx.load_texture(format!("input-{name}"), color, TextureOptions::LINEAR);
-    InputImage { name, rgba: Arc::new(rgba), tex, record: None }
+    InputImage { name, rgba: Arc::new(rgba), tex }
 }
 
 #[cfg(test)]
