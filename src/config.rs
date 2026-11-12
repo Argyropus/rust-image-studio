@@ -691,7 +691,7 @@ pub fn has_tensor_cores(name: &str) -> bool {
 
 /// A GeForce GTX card (16 series and older, e.g. GTX 1650): no tensor cores, so sampling
 /// is compute-bound, roughly 10–15× slower than an RTX 3060 Ti (a 1024² Turbo image took
-/// over 500 s on a GTX 1650). These cards start on the "Fast" size with Lightning 4 steps.
+/// over 500 s on a GTX 1650). These cards start on the Small size with Lightning 4 steps.
 /// Self-tests can pretend another card name (`QIS_FAKE_GPU_NAME`, with `QIS_SHOT_DIR`).
 pub fn slow_gpu() -> bool {
     static SLOW: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -706,7 +706,7 @@ pub fn slow_gpu() -> bool {
     })
 }
 
-/// Over ~0.6 MP (above the "Fast" size) a GTX card takes minutes per image.
+/// Over ~0.6 MP (above the Small size) a GTX card takes minutes per image.
 pub fn slow_for_gpu(w: u32, h: u32) -> bool {
     slow_gpu() && (w as u64 * h as u64) > 600_000
 }
@@ -1229,7 +1229,7 @@ pub struct Settings {
     pub lang_chosen: bool,
     /// GPU interface for the engine; Auto picks it from the graphics card.
     pub gpu_backend: GpuBackend,
-    /// The GTX defaults ("Fast" size, Lightning 4 steps) were applied once; after that
+    /// The GTX defaults (Small size, Lightning 4 steps) were applied once; after that
     /// the user's own choices stay.
     pub slow_gpu_defaults: bool,
     /// Ask GitHub at startup whether a newer release exists (one anonymous request).
@@ -1972,8 +1972,8 @@ mod aspect_tests {
 }
 
 /// (label, megapixels)
-pub const SIZES: [(&str, f32); 3] = [("빠름", 0.5), ("표준", 1.0), ("고화질", 1.6)];
-const SIZE_LABELS_EN: [&str; 3] = ["Fast", "Standard", "High res"];
+pub const SIZES: [(&str, f32); 3] = [("작게", 0.5), ("보통", 1.0), ("크게", 1.6)];
+const SIZE_LABELS_EN: [&str; 3] = ["Small", "Medium", "Large"];
 
 /// Labels of `SIZES` in the UI language.
 pub fn size_labels() -> Vec<&'static str> {
@@ -1981,7 +1981,7 @@ pub fn size_labels() -> Vec<&'static str> {
 }
 
 impl GenParams {
-    /// Defaults for a GTX card: the "Fast" size (736×736 square) and Lightning 4 steps,
+    /// Defaults for a GTX card: the Small size (736×736 square) and Lightning 4 steps,
     /// about 4× less work than 1024² in 8 steps.
     pub fn apply_slow_gpu_defaults(&mut self) {
         self.size = 0;

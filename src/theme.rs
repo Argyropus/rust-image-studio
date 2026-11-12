@@ -164,8 +164,37 @@ pub fn section(ui: &mut Ui, title: &str) {
     ui.label(bold(title, 13.0).color(TEXT_DIM));
 }
 
+/// Plain card as wide as the column, for content that fills the width (segmented rows).
+/// The width is measured outside the card, like `fold_card`: inside, the available width
+/// can include the scroll bar's gutter.
+pub fn wide_card(ui: &mut Ui, add: impl FnOnce(&mut Ui)) {
+    let visible_right = ui.clip_rect().right() - 16.0;
+    let outer_w = (visible_right - ui.cursor().left()).min(ui.available_width());
+    let inner_w = (outer_w - 28.0).max(100.0);
+    card().show(ui, |ui| {
+        ui.set_min_width(inner_w);
+        ui.set_max_width(inner_w);
+        add(ui);
+    });
+}
+
+/// One settings row: a short label in a fixed column, then the control filling the rest.
+pub fn labeled_row(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui)) {
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 8.0;
+        let (rect, _) = ui.allocate_exact_size(vec2(44.0, 32.0), Sense::hover());
+        ui.painter().text(rect.left_center(), egui::Align2::LEFT_CENTER, label, FontId::proportional(12.5), TEXT_DIM);
+        add(ui);
+    });
+}
+
 /// Primary call-to-action button.
 pub fn primary_button(ui: &mut Ui, text: &str, height: f32, enabled: bool) -> Response {
+    primary_button_icon(ui, None, text, height, enabled)
+}
+
+/// `primary_button` with a line icon before the text.
+pub fn primary_button_icon(ui: &mut Ui, icon: Option<Icon>, text: &str, height: f32, enabled: bool) -> Response {
     let width = ui.available_width();
     let (rect, resp) = ui.allocate_exact_size(vec2(width, height), if enabled { Sense::click() } else { Sense::hover() });
     if ui.is_rect_visible(rect) {
@@ -183,55 +212,92 @@ pub fn primary_button(ui: &mut Ui, text: &str, height: f32, enabled: bool) -> Re
             p.rect_filled(rect.expand(2.0), 12, ACCENT.gamma_multiply(0.18));
         }
         p.rect_filled(rect, 10, fill);
-        p.text(
-            rect.center(),
-            egui::Align2::CENTER_CENTER,
-            text,
-            FontId::new(16.0, FontFamily::Name(BOLD.into())),
-            if enabled { Color32::WHITE } else { TEXT_FAINT },
-        );
+        let color = if enabled { Color32::WHITE } else { TEXT_FAINT };
+        let galley = p.layout_no_wrap(text.to_owned(), FontId::new(16.0, FontFamily::Name(BOLD.into())), color);
+        let icon_w = if icon.is_some() { 17.0 + 9.0 } else { 0.0 };
+        let x = rect.center().x - (icon_w + galley.size().x) / 2.0;
+        if let Some(icon) = icon {
+            paint_icon(p, egui::pos2(x + 8.5, rect.center().y), 17.0, icon, color);
+        }
+        p.galley_with_override_text_color(egui::pos2(x + icon_w, rect.center().y - galley.size().y / 2.0), galley, color);
     }
     if enabled { resp.on_hover_cursor(egui::CursorIcon::PointingHand) } else { resp }
 }
 
 /// A row of equally-sized toggle buttons; returns true if the selection changed.
 pub fn segmented(ui: &mut Ui, selected: &mut usize, labels: &[&str]) -> bool {
-    segmented_impl(ui, selected, labels, None)
+    segmented_impl(ui, selected, labels, None, None, None)
 }
 
 /// `segmented` with a hover tooltip per segment.
 pub fn segmented_tips(ui: &mut Ui, selected: &mut usize, labels: &[&str], tips: &[&str]) -> bool {
-    segmented_impl(ui, selected, labels, Some(tips))
+    segmented_impl(ui, selected, labels, Some(tips), None, None)
 }
 
-fn segmented_impl(ui: &mut Ui, selected: &mut usize, labels: &[&str], tips: Option<&[&str]>) -> bool {
+/// `segmented_tips` where some segments can't be picked right now (`enabled[i] == false`):
+/// they are drawn faint and still show their tooltip, which should say why.
+pub fn segmented_gated(ui: &mut Ui, selected: &mut usize, labels: &[&str], tips: &[&str], enabled: &[bool]) -> bool {
+    segmented_impl(ui, selected, labels, Some(tips), None, Some(enabled))
+}
+
+/// `segmented_tips` with a line icon before each label (the mode bar).
+pub fn segmented_icons(ui: &mut Ui, selected: &mut usize, icons: &[Icon], labels: &[&str], tips: &[&str]) -> bool {
+    segmented_impl(ui, selected, labels, Some(tips), Some(icons), None)
+}
+
+fn segmented_impl(
+    ui: &mut Ui,
+    selected: &mut usize,
+    labels: &[&str],
+    tips: Option<&[&str]>,
+    icons: Option<&[Icon]>,
+    enabled: Option<&[bool]>,
+) -> bool {
     let mut changed = false;
     let width = ui.available_width();
-    let h = 32.0;
+    let h = if icons.is_some() { 34.0 } else { 32.0 };
     let (rect, _) = ui.allocate_exact_size(vec2(width, h), Sense::hover());
     ui.painter().rect_filled(rect, 9, INPUT);
     let seg_w = (width - 4.0) / labels.len() as f32;
+    let font = FontId::proportional(if icons.is_some() { 13.0 } else { 13.5 });
     for (i, label) in labels.iter().enumerate() {
         let r = egui::Rect::from_min_size(rect.min + vec2(2.0 + seg_w * i as f32, 2.0), vec2(seg_w, h - 4.0));
-        let mut resp = ui.interact(r, ui.scope_id().with(("seg", label, i)), Sense::click());
-        if let Some(tip) = tips.and_then(|t| t.get(i)) {
+        let usable = enabled.is_none_or(|e| e.get(i).copied().unwrap_or(true));
+        let mut resp = ui.interact(r, ui.scope_id().with(("seg", label, i)), if usable { Sense::click() } else { Sense::hover() });
+        if let Some(tip) = tips.and_then(|t| t.get(i)).filter(|t| !t.is_empty()) {
             resp = resp.on_hover_text(*tip);
         }
-        let on = *selected == i;
-        if on {
-            ui.painter().rect_filled(r, 7, ACCENT_SOFT);
-            ui.painter().rect_stroke(r, 7, Stroke::new(1.0, ACCENT), egui::StrokeKind::Inside);
-        } else if resp.hovered() {
-            ui.painter().rect_filled(r, 7, WIDGET);
+        if usable {
+            resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
         }
-        ui.painter().text(
-            r.center(),
-            egui::Align2::CENTER_CENTER,
-            *label,
-            FontId::proportional(13.5),
-            if on { Color32::WHITE } else { TEXT_DIM },
-        );
-        if resp.clicked() && !on {
+        let on = *selected == i;
+        let hot = usable && resp.hovered();
+        let p = ui.painter();
+        if on {
+            p.rect_filled(r, 7, ACCENT_SOFT);
+            p.rect_stroke(r, 7, Stroke::new(1.0, ACCENT), egui::StrokeKind::Inside);
+        } else if hot {
+            p.rect_filled(r, 7, WIDGET);
+        }
+        let color = if !usable {
+            TEXT_FAINT.gamma_multiply(0.7)
+        } else if on {
+            Color32::WHITE
+        } else if hot {
+            TEXT
+        } else {
+            TEXT_DIM
+        };
+        let galley = p.layout_no_wrap((*label).to_owned(), font.clone(), color);
+        // The icon is dropped when the segment is too narrow for icon + label.
+        let icon = icons.and_then(|ic| ic.get(i)).filter(|_| galley.size().x + 14.0 + 5.0 + 8.0 <= seg_w);
+        let icon_w = if icon.is_some() { 14.0 + 5.0 } else { 0.0 };
+        let x = r.center().x - (icon_w + galley.size().x) / 2.0;
+        if let Some(icon) = icon {
+            paint_icon(p, egui::pos2(x + 7.0, r.center().y), 13.0, *icon, color);
+        }
+        p.galley_with_override_text_color(egui::pos2(x + icon_w, r.center().y - galley.size().y / 2.0), galley, color);
+        if resp.clicked() && !on && usable {
             *selected = i;
             changed = true;
         }
@@ -239,41 +305,96 @@ fn segmented_impl(ui: &mut Ui, selected: &mut usize, labels: &[&str], tips: Opti
     changed
 }
 
-/// Tile showing an aspect-ratio rectangle icon with its label.
-pub fn aspect_tile(ui: &mut Ui, on: bool, label: &str, hint: &str, w: f32, h: f32, size: Vec2) -> Response {
-    let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
+/// Compact aspect choice: the shape at its true proportions next to its ratio, in one line.
+/// `shape` is (w, h); `None` draws the picture icon (follow the input image).
+pub fn aspect_chip(ui: &mut Ui, on: bool, enabled: bool, label: &str, shape: Option<(f32, f32)>, size: Vec2) -> Response {
+    let (rect, resp) = ui.allocate_exact_size(size, if enabled { Sense::click() } else { Sense::hover() });
     if ui.is_rect_visible(rect) {
         let p = ui.painter();
-        let hot = resp.hovered();
-        let fill = if on { ACCENT_SOFT } else if hot { WIDGET_HOVER } else { INPUT };
-        p.rect_filled(rect, 9, fill);
+        let hot = enabled && resp.hovered();
+        let on = on && enabled;
+        p.rect_filled(rect, 8, if on { ACCENT_SOFT } else if hot { WIDGET_HOVER } else { INPUT });
         if on {
-            p.rect_stroke(rect, 9, Stroke::new(1.0, ACCENT), egui::StrokeKind::Inside);
+            p.rect_stroke(rect, 8, Stroke::new(1.0, ACCENT), egui::StrokeKind::Inside);
         }
-        // The shape at its true proportions, inside a fixed 26 px box (filled softly so the
-        // area difference between shapes reads too).
-        let max = 26.0;
-        let (iw, ih) = if w >= h { (max, max * h / w) } else { (max * w / h, max) };
-        let icon = egui::Rect::from_center_size(egui::pos2(rect.center().x, rect.top() + 22.0), vec2(iw, ih));
-        let ink = if on { Color32::WHITE } else if hot { TEXT } else { TEXT_DIM };
-        p.rect_filled(icon, 3, ink.gamma_multiply(0.14));
-        p.rect_stroke(icon, 3, Stroke::new(1.5, ink), egui::StrokeKind::Middle);
-        p.text(
-            egui::pos2(rect.center().x, rect.top() + 47.0),
-            egui::Align2::CENTER_CENTER,
-            label,
-            FontId::new(12.5, FontFamily::Name(BOLD.into())),
-            if on { Color32::WHITE } else { TEXT },
-        );
-        p.text(
-            egui::pos2(rect.center().x, rect.top() + 62.0),
-            egui::Align2::CENTER_CENTER,
-            hint,
-            FontId::proportional(10.5),
-            if on { ACCENT_HOVER } else { TEXT_FAINT },
-        );
+        let ink = if !enabled {
+            TEXT_FAINT.gamma_multiply(0.7)
+        } else if on {
+            Color32::WHITE
+        } else if hot {
+            TEXT
+        } else {
+            TEXT_DIM
+        };
+        let galley = p.layout_no_wrap(label.to_owned(), FontId::new(12.0, FontFamily::Name(BOLD.into())), ink);
+        let box_w = 15.0;
+        let x = rect.center().x - (box_w + 5.0 + galley.size().x) / 2.0;
+        let c = egui::pos2(x + box_w / 2.0, rect.center().y);
+        match shape {
+            Some((w, h)) => {
+                let max = 14.0;
+                let (iw, ih) = if w >= h { (max, max * h / w) } else { (max * w / h, max) };
+                let icon = egui::Rect::from_center_size(c, vec2(iw, ih));
+                p.rect_filled(icon, 2, ink.gamma_multiply(0.14));
+                p.rect_stroke(icon, 2, Stroke::new(1.4, ink), egui::StrokeKind::Middle);
+            }
+            None => paint_icon(p, c, 13.0, Icon::Image, ink),
+        }
+        p.galley_with_override_text_color(egui::pos2(x + box_w + 5.0, rect.center().y - galley.size().y / 2.0), galley, ink);
     }
-    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+    if enabled { resp.on_hover_cursor(egui::CursorIcon::PointingHand) } else { resp }
+}
+
+/// "− n +" stepper as tall as the button next to it. Returns true when the value changed.
+pub fn stepper(ui: &mut Ui, value: &mut u32, range: std::ops::RangeInclusive<u32>, text: &str, height: f32, tip: &str) -> bool {
+    let (side, mid) = (30.0, 44.0);
+    let (rect, _) = ui.allocate_exact_size(vec2(side * 2.0 + mid, height), Sense::hover());
+    let p = ui.painter().clone();
+    p.rect_filled(rect, 10, INPUT);
+    p.rect_stroke(rect, 10, Stroke::new(1.0, BORDER), egui::StrokeKind::Inside);
+    let mut changed = false;
+    for (minus, x) in [(true, rect.left()), (false, rect.right() - side)] {
+        let r = egui::Rect::from_min_size(egui::pos2(x, rect.top()), vec2(side, height));
+        let can = if minus { *value > *range.start() } else { *value < *range.end() };
+        let resp = ui.interact(r, ui.scope_id().with(("stepper", minus)), if can { Sense::click() } else { Sense::hover() });
+        let hot = can && resp.hovered();
+        if hot {
+            p.rect_filled(r.shrink(3.0), 7, WIDGET_HOVER);
+        }
+        let color = if !can { TEXT_FAINT.gamma_multiply(0.6) } else if hot { TEXT } else { TEXT_DIM };
+        let c = r.center();
+        p.line_segment([c - vec2(4.5, 0.0), c + vec2(4.5, 0.0)], Stroke::new(1.6, color));
+        if !minus {
+            p.line_segment([c - vec2(0.0, 4.5), c + vec2(0.0, 4.5)], Stroke::new(1.6, color));
+        }
+        if can && resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+            *value = if minus { *value - 1 } else { *value + 1 };
+            changed = true;
+        }
+    }
+    let mid_rect = egui::Rect::from_min_size(egui::pos2(rect.left() + side, rect.top()), vec2(mid, height));
+    ui.interact(mid_rect, ui.scope_id().with("stepper_mid"), Sense::hover()).on_hover_text(tip);
+    p.text(mid_rect.center(), egui::Align2::CENTER_CENTER, text, FontId::new(14.0, FontFamily::Name(BOLD.into())), TEXT);
+    changed
+}
+
+/// Small flat button with a line icon and a label, for card headers.
+pub fn chip_button(ui: &mut Ui, icon: Icon, label: &str, tip: &str, enabled: bool) -> Response {
+    let font = FontId::proportional(12.5);
+    let galley = ui.painter().layout_no_wrap(label.to_owned(), font, TEXT);
+    let (h, pad, icon_w) = (24.0, 8.0, 13.0 + 5.0);
+    let w = pad * 2.0 + icon_w + galley.size().x;
+    let (rect, resp) = ui.allocate_exact_size(vec2(w, h), if enabled { Sense::click() } else { Sense::hover() });
+    if ui.is_rect_visible(rect) {
+        let p = ui.painter();
+        let hot = enabled && resp.hovered();
+        p.rect_filled(rect, 7, if hot { WIDGET_HOVER } else { WIDGET });
+        let color = if !enabled { TEXT_FAINT } else if hot { Color32::WHITE } else { TEXT };
+        paint_icon(p, egui::pos2(rect.left() + pad + 6.5, rect.center().y), 12.5, icon, if enabled && !hot { TEXT_DIM } else { color });
+        p.galley_with_override_text_color(egui::pos2(rect.left() + pad + icon_w, rect.center().y - galley.size().y / 2.0), galley, color);
+    }
+    let resp = if enabled { resp.on_hover_cursor(egui::CursorIcon::PointingHand) } else { resp };
+    resp.on_hover_text(tip)
 }
 
 /// Colored dot + text status pill.
@@ -354,31 +475,6 @@ pub fn fold_card(ui: &mut Ui, key: &str, title: &str, summary: &str, default_ope
     state.store(ui.ctx());
 }
 
-/// iOS-style on/off switch; returns the response (clicked = toggled).
-pub fn switch(ui: &mut Ui, on: &mut bool) -> Response {
-    let size = vec2(38.0, 22.0);
-    let (rect, mut resp) = ui.allocate_exact_size(size, Sense::click());
-    if resp.clicked() {
-        *on = !*on;
-        resp.mark_changed();
-    }
-    if ui.is_rect_visible(rect) {
-        let t = ui.ctx().animate_bool_responsive(resp.id, *on);
-        let track = Color32::from_rgb(
-            (WIDGET.r() as f32 + (ACCENT.r() as f32 - WIDGET.r() as f32) * t) as u8,
-            (WIDGET.g() as f32 + (ACCENT.g() as f32 - WIDGET.g() as f32) * t) as u8,
-            (WIDGET.b() as f32 + (ACCENT.b() as f32 - WIDGET.b() as f32) * t) as u8,
-        );
-        ui.painter().rect_filled(rect, 11, track);
-        if !*on {
-            ui.painter().rect_stroke(rect, 11, Stroke::new(1.0, BORDER), egui::StrokeKind::Inside);
-        }
-        let x = egui::lerp((rect.left() + 11.0)..=(rect.right() - 11.0), t);
-        ui.painter().circle_filled(egui::pos2(x, rect.center().y), 8.0, Color32::WHITE);
-    }
-    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
-}
-
 /// Line icons drawn with the painter, so every toolbar glyph shares one stroke style
 /// (emoji glyphs come in mixed colours and sizes).
 #[derive(Clone, Copy, PartialEq)]
@@ -398,6 +494,15 @@ pub enum Icon {
     Help,
     GridSmall,
     GridLarge,
+    /// Letter T: text-to-image.
+    Type,
+    /// Stacked sheets: variations of one picture.
+    Vary,
+    /// Magic wand: edit by instruction.
+    Wand,
+    Clock,
+    Bulb,
+    Dice,
 }
 
 /// Paints `icon` in a 16×16 design grid scaled to `size`, centred on `c`.
@@ -531,6 +636,42 @@ pub fn paint_icon(p: &egui::Painter, c: egui::Pos2, size: f32, icon: Icon, color
         Icon::GridLarge => {
             for (x, y) in [(-6.5, -6.5), (0.5, -6.5), (-6.5, 0.5), (0.5, 0.5)] {
                 p.rect_filled(egui::Rect::from_min_size(pt(x, y), vec2(6.0, 6.0) * k), 1.0, color);
+            }
+        }
+        Icon::Type => {
+            line(&[(-5.5, -3.5), (-5.5, -6.0), (5.5, -6.0), (5.5, -3.5)]);
+            line(&[(0.0, -6.0), (0.0, 6.0)]);
+            line(&[(-2.5, 6.0), (2.5, 6.0)]);
+        }
+        Icon::Vary => {
+            closed(&[(0.0, -6.5), (7.0, -2.5), (0.0, 1.5), (-7.0, -2.5)]);
+            line(&[(-7.0, 1.0), (0.0, 5.0), (7.0, 1.0)]);
+        }
+        Icon::Wand => {
+            p.line_segment([pt(-6.5, 6.5), pt(1.5, -1.5)], Stroke::new(2.0 * k.max(1.0), color));
+            line(&[(4.5, -7.5), (4.5, -1.5)]);
+            line(&[(1.5, -4.5), (7.5, -4.5)]);
+            p.circle_filled(pt(-3.5, -4.0), 1.0 * k, color);
+            p.circle_filled(pt(5.5, 3.5), 1.0 * k, color);
+        }
+        Icon::Clock => {
+            p.circle_stroke(pt(0.0, 0.0), 6.5 * k, st);
+            line(&[(0.0, -3.5), (0.0, 0.0), (2.8, 1.8)]);
+        }
+        Icon::Bulb => {
+            p.circle_stroke(pt(0.0, -2.0), 4.6 * k, st);
+            line(&[(-2.0, 4.3), (2.0, 4.3)]);
+            line(&[(-1.2, 6.8), (1.2, 6.8)]);
+        }
+        Icon::Dice => {
+            p.rect_stroke(
+                egui::Rect::from_min_max(pt(-6.5, -6.5), pt(6.5, 6.5)),
+                2.5 * k,
+                st,
+                egui::StrokeKind::Middle,
+            );
+            for (x, y) in [(-3.0, -3.0), (3.0, -3.0), (0.0, 0.0), (-3.0, 3.0), (3.0, 3.0)] {
+                p.circle_filled(pt(x, y), 1.1 * k, color);
             }
         }
     }

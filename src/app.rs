@@ -57,7 +57,7 @@ const EDIT_EXAMPLES: [&str; 7] = [
 const PROMPT_TIPS: [(&str, &str); 6] = [
     (
         "제품을 든 모델 컷 (2단계)",
-        "① 텍스트 생성으로 휴대폰을 손에 든 자세를 먼저 만들고 ② 🖼 입력으로 → 2번에 케이스 이미지 추가 → \"1번 이미지 속 휴대폰의 케이스를 2번 이미지의 케이스 디자인과 똑같이 바꿔줘\". 한 번에 합성하면 손에 들지 않고 옷 위에 붙어 버립니다. 편집 때는 ⚡ 빠른 모드를 끄세요.",
+        "① 텍스트 생성으로 휴대폰을 손에 든 자세를 먼저 만들고 ② 🖼 입력으로 → 2번에 케이스 이미지 추가 → \"1번 이미지 속 휴대폰의 케이스를 2번 이미지의 케이스 디자인과 똑같이 바꿔줘\". 한 번에 합성하면 손에 들지 않고 옷 위에 붙어 버립니다. 편집 때는 속도를 '고화질'로 두세요.",
     ),
     ("자세히 쓰기", "주제 → 세부 묘사 → 배경 → 조명·분위기 → 촬영 방식/화풍 순서로 쓰면 잘 따라옵니다."),
     ("짧은 단어만 쓰지 않기", "\"고양이\"보다 \"창가 햇살 아래 통통한 치즈 고양이, 털 결이 선명한 클로즈업, 35mm 필름 사진\"이 훨씬 좋습니다."),
@@ -70,13 +70,13 @@ const PROMPT_TIPS: [(&str, &str); 6] = [
 /// only: tested negatives such as "액자나 테두리 없음" made the model draw frames.
 use crate::engine::OUTPAINT_DEFAULT;
 
-/// Modes in bar order: (mode, label, tooltip with its Ctrl+number shortcut).
-const MODES: [(GenMode, (&str, &str), (&str, &str)); 5] = [
-    (GenMode::Text, ("텍스트", "Text"), ("글로 설명해서 새 그림 만들기 (Ctrl+1)", "Make a new picture from a description (Ctrl+1)")),
-    (GenMode::Variation, ("변형", "Variation"), ("넣은 그림 전체를 비슷하게 다시 그리기 (Ctrl+2)", "Redraw the whole input picture, similar but different (Ctrl+2)")),
-    (GenMode::Edit, ("편집", "Edit"), ("말로 지시해서 고치기 (Ctrl+3)", "Change the picture by telling it what to do (Ctrl+3)")),
-    (GenMode::Inpaint, ("부분수정", "Inpaint"), ("브러시로 칠한 곳만 다시 그리기 (Ctrl+4)", "Redraw only the area you paint (Ctrl+4)")),
-    (GenMode::Outpaint, ("아웃페인팅", "Expand"), ("그림 바깥을 넓혀서 이어 그리기 (Ctrl+5)", "Widen the picture and continue the scene (Ctrl+5)")),
+/// Modes in bar order: (mode, icon, label, tooltip with its Ctrl+number shortcut).
+const MODES: [(GenMode, Icon, (&str, &str), (&str, &str)); 5] = [
+    (GenMode::Text, Icon::Type, ("텍스트", "Text"), ("글로 설명해서 새 그림 만들기 (Ctrl+1)", "Make a new picture from a description (Ctrl+1)")),
+    (GenMode::Variation, Icon::Vary, ("변형", "Variation"), ("넣은 그림 전체를 비슷하게 다시 그리기 (Ctrl+2)", "Redraw the whole input picture, similar but different (Ctrl+2)")),
+    (GenMode::Edit, Icon::Wand, ("편집", "Edit"), ("말로 지시해서 고치기 (Ctrl+3)", "Change the picture by telling it what to do (Ctrl+3)")),
+    (GenMode::Inpaint, Icon::Brush, ("부분수정", "Inpaint"), ("브러시로 칠한 곳만 다시 그리기 (Ctrl+4)", "Redraw only the area you paint (Ctrl+4)")),
+    (GenMode::Outpaint, Icon::Expand, ("아웃페인팅", "Expand"), ("그림 바깥을 넓혀서 이어 그리기 (Ctrl+5)", "Widen the picture and continue the scene (Ctrl+5)")),
 ];
 
 const OUTPAINT_EXAMPLES: [&str; 3] = [
@@ -136,7 +136,7 @@ const EDIT_EXAMPLES_EN: [&str; 7] = [
 const PROMPT_TIPS_EN: [(&str, &str); 6] = [
     (
         "Model holding a product (2 steps)",
-        "① First make the pose of holding a phone with text generation, ② then 🖼 Use as input → add the case image as image 2 → \"Change the case of the phone in image 1 to exactly the case design in image 2\". Compositing in one go tends to stick the case onto the clothes instead of the hand. Turn ⚡ Fast mode off for edits.",
+        "① First make the pose of holding a phone with text generation, ② then 🖼 Use as input → add the case image as image 2 → \"Change the case of the phone in image 1 to exactly the case design in image 2\". Compositing in one go tends to stick the case onto the clothes instead of the hand. Keep the speed on Best quality for edits.",
     ),
     ("Be detailed", "Subject → details → background → lighting/mood → camera or art style works best."),
     ("Avoid single words", "\"cat\" is much worse than \"a chubby ginger cat under window sunlight, close-up with crisp fur, 35mm film photo\"."),
@@ -382,6 +382,25 @@ impl StudioApp {
             if let Ok(a) = std::env::var("QIS_EXTRA_ARGS") {
                 settings.extra_args = a;
             }
+            // Self-test only: start in a given mode, to screenshot its left panel.
+            if let Ok(m) = std::env::var("QIS_MODE") {
+                params.mode = match m.as_str() {
+                    "variation" => GenMode::Variation,
+                    "edit" => GenMode::Edit,
+                    "inpaint" => GenMode::Inpaint,
+                    "outpaint" => GenMode::Outpaint,
+                    _ => GenMode::Text,
+                };
+            }
+            // Self-test only: the speed picker's choice (0 quality, 1 faster, 2 fastest), set
+            // the way `set_speed` leaves it when the Lightning file is already there.
+            if let Ok(s) = std::env::var("QIS_SPEED") {
+                params.fast_mode = s != "0";
+                params.loras.retain(|l| !crate::lora::is_speed(&l.file));
+                if s == "2" {
+                    params.loras.push(crate::lora::LoraSel { file: crate::lora::LIGHTNING_FILE.to_owned(), weight: 1.0, enabled: true });
+                }
+            }
             // Self-test only: engine build (cuda / rocm / vulkan), e.g. the Vulkan build on an NVIDIA card.
             if let Ok(b) = std::env::var("QIS_BACKEND") {
                 settings.gpu_backend = match b.as_str() {
@@ -404,7 +423,7 @@ impl StudioApp {
         }
         crate::i18n::set_english(settings.english);
         // GTX cards (no tensor cores) took minutes per 1024² image: start them once on the
-        // "Fast" size with Lightning 4 steps, also when they already ran an older version.
+        // Small size with Lightning 4 steps, also when they already ran an older version.
         let slow_defaults = crate::config::slow_gpu() && !settings.slow_gpu_defaults;
         if slow_defaults {
             params.apply_slow_gpu_defaults();
@@ -499,8 +518,8 @@ impl StudioApp {
         if slow_defaults {
             app.toast(
                 t!(
-                    "GTX 그래픽카드: 빠른 생성을 위해 '빠름' 크기와 Lightning 4단계를 기본으로 켰습니다",
-                    "GTX graphics card: the \"Fast\" size and Lightning 4 steps are on by default for quicker images"
+                    "GTX 그래픽카드: 빠른 생성을 위해 크기 '작게'와 속도 '가장 빠르게'(Lightning 4단계)를 기본으로 골랐습니다",
+                    "GTX graphics card: the Small size and the Fastest speed (Lightning 4 steps) are picked by default"
                 ),
                 ACCENT_HOVER,
             );
@@ -937,6 +956,50 @@ impl StudioApp {
     fn lightning_applies(&self) -> bool {
         matches!(self.params.mode, GenMode::Text | GenMode::Edit)
             && self.params.loras.iter().any(|l| l.enabled && crate::lora::is_speed(&l.file) && self.lora_files.contains(&l.file))
+    }
+
+    /// The speed picker's current choice, as it will run: 0 quality (8 steps), 1 fast (step
+    /// cache on 8 steps), 2 fastest (Lightning 4 steps). Lightning counts only where it runs.
+    fn speed_choice(&self) -> usize {
+        if self.lightning_applies() {
+            2
+        } else if self.params.fast_mode && self.params.mode != GenMode::Outpaint {
+            1
+        } else {
+            0
+        }
+    }
+
+    /// Applies a speed-picker choice. "Fastest" turns Lightning on (downloading it first when
+    /// it isn't there) and keeps the step cache as the fallback for modes that drop Lightning.
+    fn set_speed(&mut self, ctx: &Context, choice: usize) {
+        if choice < 2 {
+            self.params.fast_mode = choice == 1;
+            for l in &mut self.params.loras {
+                if crate::lora::is_speed(&l.file) {
+                    l.enabled = false;
+                }
+            }
+            return;
+        }
+        self.params.fast_mode = true;
+        let file = crate::lora::LIGHTNING_FILE;
+        if self.lora_files.iter().any(|f| f == file) {
+            self.enable_lora(file);
+        } else if self.dl.running {
+            self.toast(t!("다른 다운로드가 끝난 뒤 다시 눌러 주세요", "Try again when the current download has finished"), AMBER);
+        } else {
+            let src = &crate::lora::LIGHTNING_SOURCE;
+            self.dl = DlState { running: true, ..Default::default() };
+            self.dl_is_lora = true;
+            self.dl_lora_file = Some(src.file);
+            let task = DlTask { source: src, dest: self.settings.lora_dir().join(src.file) };
+            self.dl.cancel = Some(download::spawn(vec![task], self.dl_tx.clone(), ctx.clone()));
+            self.toast(
+                tf!("Lightning 4단계 LoRA({}MB)를 받습니다. 받으면 바로 적용됩니다.", "Downloading the Lightning 4-step LoRA ({} MB). It is applied as soon as it arrives.", src.approx_bytes / 1_000_000),
+                ACCENT_HOVER,
+            );
+        }
     }
 
     fn out_dims(&self) -> (u32, u32) {
@@ -2096,20 +2159,11 @@ impl StudioApp {
                 }
                 self.prompt_card(ui);
                 ui.add_space(6.0);
-                self.size_card(ui);
+                self.setup_card(ui);
                 ui.add_space(6.0);
-                self.seed_card(ui);
-                ui.add_space(6.0);
-                if self.params.mode == GenMode::Outpaint {
-                    // Expanding: settings that made the border fail more often (speed LoRAs,
-                    // fewer steps, CFG, step cache) are fixed and hidden.
-                    ui.label(
-                        RichText::new(t!("아웃페인팅은 실패를 줄이려고 Turbo 8단계 · CFG 1 · LoRA 끔 · 빠른 모드 끔으로 고정합니다 (해당 설정은 숨김).", "Expanding is fixed to Turbo 8 steps · CFG 1 · no LoRA · fast mode off to avoid failures (those settings are hidden)."))
-                            .size(12.0)
-                            .color(TEXT_FAINT),
-                    );
-                } else {
-                    self.advanced_card(ui);
+                self.details_card(ui);
+                // Expanding runs without LoRAs (see `setup_card`), so the card is hidden there.
+                if self.params.mode != GenMode::Outpaint {
                     ui.add_space(6.0);
                     self.lora_card(ui);
                 }
@@ -2151,7 +2205,7 @@ impl StudioApp {
                 for tip in [
                     t!("이미지를 창 어디로든 끌어다 놓으면 입력으로 들어갑니다. 이 앱으로 만든 PNG는 생성 설정까지 불러올 수 있습니다.", "Drop an image anywhere on the window to use it as input. PNGs made by this app also restore their generation settings."),
                     t!("갤러리 이미지를 우클릭하면 입력으로 사용 · 설정 불러오기 · 삭제를 바로 할 수 있습니다.", "Right-click a gallery image to use it as input, load its settings, or delete it."),
-                    t!("왼쪽의 크기 · 시드 · 고급 · LoRA 카드는 제목을 눌러 접을 수 있고, 접어도 제목 줄에 현재 값이 보입니다.", "The size · seed · advanced · LoRA cards fold when you click their title; the title row still shows the current values."),
+                    t!("왼쪽의 세부 설정 · LoRA 카드는 제목을 눌러 펼치고 접을 수 있고, 접어도 제목 줄에 현재 값이 보입니다.", "The More settings and LoRA cards open and fold when you click their title; the title row still shows the current values."),
                     t!("아웃페인팅은 미리보기에서 늘리고 싶은 쪽을 잡아 바깥으로 끌면 됩니다. 프롬프트는 비워도 됩니다.", "To expand, drag the side you want to grow outward in the preview. The prompt can stay empty."),
                 ] {
                     ui.horizontal_wrapped(|ui| {
@@ -2201,9 +2255,10 @@ impl StudioApp {
     /// Mode buttons in the pinned bar above the scrolling controls.
     fn mode_bar(&mut self, ui: &mut Ui) {
         let mut idx = MODES.iter().position(|m| m.0 == self.params.mode).unwrap_or(0);
-        let labels = MODES.map(|m| crate::i18n::pick(&m.1));
-        let tips = MODES.map(|m| crate::i18n::pick(&m.2));
-        if segmented_tips(ui, &mut idx, &labels, &tips) {
+        let icons = MODES.map(|m| m.1);
+        let labels = MODES.map(|m| crate::i18n::pick(&m.2));
+        let tips = MODES.map(|m| crate::i18n::pick(&m.3));
+        if segmented_icons(ui, &mut idx, &icons, &labels, &tips) {
             self.set_mode(MODES[idx].0);
         }
     }
@@ -2289,10 +2344,10 @@ impl StudioApp {
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = 4.0;
-                    if ui.small_button(t!("📋 붙여넣기", "📋 Paste")).on_hover_text(t!("클립보드 이미지 (Ctrl+V)", "Clipboard image (Ctrl+V)")).clicked() {
+                    if chip_button(ui, Icon::Copy, t!("붙여넣기", "Paste"), t!("클립보드 이미지 (Ctrl+V)", "Clipboard image (Ctrl+V)"), true).clicked() {
                         self.paste_input(&ctx);
                     }
-                    if ui.small_button(t!("📂 열기", "📂 Open")).clicked() {
+                    if chip_button(ui, Icon::Folder, t!("열기", "Open"), t!("이미지 파일 고르기", "Choose image files"), true).clicked() {
                         self.pick_input_files(&ctx);
                     }
                 });
@@ -2305,7 +2360,7 @@ impl StudioApp {
                 let stroke = Stroke::new(1.5, if hot { ACCENT } else { BORDER });
                 let pts = [rect.left_top(), rect.right_top(), rect.right_bottom(), rect.left_bottom(), rect.left_top()];
                 ui.painter().extend(egui::Shape::dashed_line(&pts, stroke, 6.0, 4.0));
-                ui.painter().text(rect.center() - vec2(0.0, 22.0), Align2::CENTER_CENTER, "🖼", FontId::proportional(26.0), TEXT_DIM);
+                paint_icon(ui.painter(), rect.center() - vec2(0.0, 22.0), 26.0, Icon::Image, if hot { ACCENT_HOVER } else { TEXT_DIM });
                 ui.painter().text(rect.center() + vec2(0.0, 8.0), Align2::CENTER_CENTER, t!("이미지를 끌어다 놓거나 클릭해서 선택", "Drag an image here or click to choose"), FontId::proportional(13.5), TEXT);
                 ui.painter().text(
                     rect.center() + vec2(0.0, 30.0),
@@ -2484,7 +2539,7 @@ impl StudioApp {
         let presets: [(&str, &str, Option<(f32, f32)>); 5] = [
             ("↔ 16:9", t!("좌우로 넓게", "Wider (left/right)"), Some((16.0, 9.0))),
             ("↕ 9:16", t!("위아래로 길게", "Taller (top/bottom)"), Some((9.0, 16.0))),
-            ("⬜ 1:1", t!("정사각형으로", "To square"), Some((1.0, 1.0))),
+            ("1:1", t!("정사각형으로", "To square"), Some((1.0, 1.0))),
             ("4:3", t!("4:3으로", "To 4:3"), Some((4.0, 3.0))),
             (os_t!("⤢ 줌아웃", "⤢ Zoom out", "⛶ 줌아웃", "⛶ Zoom out"), t!("사방으로 1.5배", "1.5× on all sides"), None),
         ];
@@ -2560,9 +2615,9 @@ impl StudioApp {
                 ui.horizontal_wrapped(|ui| {
                     // The 35% is the NVIDIA measurement above; nothing was measured on AMD.
                     let hint = if self.settings.backend() == GpuBackend::Cuda {
-                        t!("⚡ INT8 모델이면 확장이 약 35% 빨라집니다 (화질 동일).", "⚡ The INT8 model expands about 35% faster (same quality).")
+                        t!("INT8 모델이면 확장이 약 35% 빨라집니다 (화질 동일).", "The INT8 model expands about 35% faster (same quality).")
                     } else {
-                        t!("⚡ INT8 확장 속도는 GPU와 메모리 배치에 따라 달라집니다.", "⚡ INT8 expansion speed depends on the GPU and memory placement.")
+                        t!("INT8 확장 속도는 GPU와 메모리 배치에 따라 달라집니다.", "INT8 expansion speed depends on the GPU and memory placement.")
                     };
                     ui.label(RichText::new(hint).size(12.0).color(ACCENT_HOVER));
                     if ui
@@ -2601,7 +2656,7 @@ impl StudioApp {
             1 => on[0].clone(),
             n => tf!("{n}개 사용 중", "{n} in use"),
         };
-        fold_card(ui, "lora", "LoRA", &summary, true, |ui| {
+        fold_card(ui, "lora", "LoRA", &summary, false, |ui| {
             ui.horizontal(|ui| {
                 ui.label(RichText::new(t!("models/loras 폴더의 파일", "Files in models/loras")).size(12.0).color(TEXT_FAINT));
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -2704,10 +2759,10 @@ impl StudioApp {
                 t!("아웃페인팅·변형·부분 수정에서는 적용되지 않습니다 (일반 8단계로 생성 · 4단계는 테두리가 비거나 대상이 두 번 그려짐)", "Not used for expand, variation or inpaint (normal 8 steps · 4 steps left borders blank or drew the subject twice)"),
                 AMBER,
             ),
-            Kind::Lightning => hint(ui, t!("⚡ 4단계로 생성 · 장당 약 12초 (8단계 약 18초) · 2단계보다 디테일이 나음", "⚡ Generates in 4 steps · about 12 s per image (8 steps: about 18 s) · more detail than 2 steps"), ACCENT_HOVER),
+            Kind::Lightning => hint(ui, t!("4단계로 생성 · 장당 약 12초 (8단계 약 18초) · 위의 속도 '가장 빠르게'와 같은 설정입니다", "Generates in 4 steps · about 12 s per image (8 steps: about 18 s) · the same setting as the Fastest speed above"), ACCENT_HOVER),
             Kind::Consistency if edit => hint(
                 ui,
-                t!("📐 편집 결과의 구도·위치를 원본에 고정합니다 · 큰 물체 제거나 자세를 바꾸는 편집에는 끄세요", "📐 Keeps the edit\'s layout and positions on the original · turn off for big removals or pose changes"),
+                t!("편집 결과의 구도·위치를 원본에 고정합니다 · 큰 물체 제거나 자세를 바꾸는 편집에는 끄세요", "Keeps the edit\'s layout and positions on the original · turn off for big removals or pose changes"),
                 ACCENT_HOVER,
             ),
             Kind::Angles if edit => self.angle_picker(ui),
@@ -2808,8 +2863,9 @@ impl StudioApp {
                         self.params.prompt.clear();
                     }
                     let recent = self.settings.recent_prompts.clone();
-                    ui.add_enabled_ui(!recent.is_empty(), |ui| {
-                        ui.menu_button(RichText::new(t!("🕘 최근", "🕘 Recent")).size(12.5), |ui| {
+                    {
+                        let r = chip_button(ui, Icon::Clock, t!("최근", "Recent"), t!("최근에 쓴 프롬프트", "Recently used prompts"), !recent.is_empty());
+                        egui::Popup::menu(&r).show(|ui| {
                             ui.set_max_width(400.0);
                             let mut remove = None;
                             for (i, p) in recent.iter().enumerate().take(15) {
@@ -2830,16 +2886,20 @@ impl StudioApp {
                                 }
                             }
                             ui.separator();
-                            if ui.button(t!("🗑 최근 기록 모두 지우기", "🗑 Clear all recent prompts")).clicked() {
+                            if ui.button(t!("최근 기록 모두 지우기", "Clear all recent prompts")).clicked() {
                                 self.settings.recent_prompts.clear();
                                 ui.close();
                             }
                         });
-                    });
-                    if ui
-                        .small_button(t!("가 글씨", "Text"))
-                        .on_hover_text(t!("이미지 속 한글 글씨 문장 틀을 끝에 붙입니다.\n\"여기에 문구\"만 원하는 글로 바꾸세요.", "Appends a sign-text template to the prompt.\nReplace \"YOUR TEXT\" with the words you want."))
-                        .clicked()
+                    }
+                    if chip_button(
+                        ui,
+                        Icon::Type,
+                        t!("글씨", "Text"),
+                        t!("이미지 속 한글 글씨 문장 틀을 끝에 붙입니다.\n\"여기에 문구\"만 원하는 글로 바꾸세요.", "Appends a sign-text template to the prompt.\nReplace \"YOUR TEXT\" with the words you want."),
+                        true,
+                    )
+                    .clicked()
                     {
                         let p = self.params.prompt.trim_end().trim_end_matches([',', '.']).to_owned();
                         let tpl = lang(TEXT_TEMPLATE, TEXT_TEMPLATE_EN);
@@ -2847,16 +2907,20 @@ impl StudioApp {
                     }
                     if self.params.mode == GenMode::Outpaint && !self.inputs.is_empty() && self.caption_ready() {
                         let busy = self.captioning.is_some() || self.caption_wanted;
-                        let r = ui
-                            .add_enabled(!busy, egui::Button::new(RichText::new(t!("🖼 사진 설명", "🖼 Describe photo")).size(12.5)).small())
-                            .on_hover_text(t!("입력 사진을 보고 장면 설명을 새로 만들어 프롬프트에 넣습니다 (GPU · 약 20초, 생성 중이면 끝난 뒤에)", "Looks at the input photo and writes a new scene description into the prompt (GPU · about 20 s, after any running generation)"));
+                        let r = chip_button(
+                            ui,
+                            Icon::Image,
+                            t!("사진 설명", "Describe photo"),
+                            t!("입력 사진을 보고 장면 설명을 새로 만들어 프롬프트에 넣습니다 (GPU · 약 20초, 생성 중이면 끝난 뒤에)", "Looks at the input photo and writes a new scene description into the prompt (GPU · about 20 s, after any running generation)"),
+                            !busy,
+                        );
                         if r.clicked() {
                             self.params.prompt.clear();
                             self.auto_prompt = None;
                             self.start_caption();
                         }
                     }
-                    if ui.small_button(t!("✨ 예시", "✨ Example")).on_hover_text(t!("예시 프롬프트 넣기 (누를 때마다 다음 예시)", "Insert an example prompt (next one on each click)")).clicked() {
+                    if chip_button(ui, Icon::Sparkle, t!("예시", "Example"), t!("예시 프롬프트 넣기 (누를 때마다 다음 예시)", "Insert an example prompt (next one on each click)"), true).clicked() {
                         let list: &[&str] = match self.params.mode {
                             GenMode::Text => lang(&EXAMPLES[..], &EXAMPLES_EN[..]),
                             GenMode::Variation => lang(&VARIATION_EXAMPLES[..], &VARIATION_EXAMPLES_EN[..]),
@@ -2918,7 +2982,11 @@ impl StudioApp {
                         .on_hover_text(t!("한 줄에 프롬프트 하나씩 적으면 위에서부터 순서대로 모두 생성합니다.\n'생성 개수'는 프롬프트마다 적용됩니다.", "Write one prompt per line to generate all of them from top to bottom.\n\'Count\' applies to each prompt."));
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    ui.label(RichText::new(t!("💡 작성 요령", "💡 Tips")).size(12.0).color(ACCENT_HOVER))
+                    ui.spacing_mut().item_spacing.x = 4.0;
+                    let text = ui.label(RichText::new(t!("작성 요령", "Tips")).size(12.0).color(ACCENT_HOVER));
+                    let (icon_rect, icon) = ui.allocate_exact_size(vec2(14.0, 14.0), Sense::hover());
+                    paint_icon(ui.painter(), icon_rect.center(), 12.5, Icon::Bulb, ACCENT_HOVER);
+                    text.union(icon)
                         .on_hover_cursor(CursorIcon::Help)
                         .on_hover_ui(|ui| {
                             ui.set_max_width(360.0);
@@ -2932,84 +3000,88 @@ impl StudioApp {
                         });
                 });
             });
-
-            if self.params.mode == GenMode::Outpaint {
-                return; // CFG is fixed at 1 for expanding: a negative prompt would do nothing
-            }
-            let cfg_on = self.params.cfg > 1.0;
-            egui::CollapsingHeader::new(RichText::new(t!("네거티브 프롬프트", "Negative prompt")).size(13.0).color(TEXT_DIM))
-                .id_salt("neg")
-                .show(ui, |ui| {
-                    ui.add(
-                        TextEdit::multiline(&mut self.params.negative_prompt)
-                            .hint_text(t!("피하고 싶은 요소 (예: 흐릿함, 저화질, 글자 깨짐)", "Things to avoid (e.g. blurry, low quality, broken text)"))
-                            .desired_rows(2)
-                            .desired_width(f32::INFINITY),
-                    );
-                    if !cfg_on {
-                        ui.label(RichText::new(os_t!("ⓘ CFG가 1이면 네거티브 프롬프트는 적용되지 않습니다. 고급 설정에서 CFG를 올리세요.", "ⓘ With CFG 1 the negative prompt has no effect. Raise CFG in Advanced settings.", "ℹ CFG가 1이면 네거티브 프롬프트는 적용되지 않습니다. 고급 설정에서 CFG를 올리세요.", "ℹ With CFG 1 the negative prompt has no effect. Raise CFG in Advanced settings.")).size(12.0).color(AMBER));
-                    }
-                });
         });
     }
 
-    fn size_card(&mut self, ui: &mut Ui) {
-        let (w, h) = self.out_dims();
-        if self.params.mode == GenMode::Outpaint {
-            // Expanding: the shape comes from the expansion amounts, so the aspect tiles
-            // (ignored here) would only contradict them. Only the pixel budget applies.
-            let summary = tf!("{w}×{h} · 확장 범위로 결정", "{w}×{h} · set by expansion");
-            fold_card(ui, "size", t!("비율 · 크기", "Aspect · Size"), &summary, true, |ui| {
-                ui.label(
-                    RichText::new(t!("확장 결과의 비율은 위의 확장 범위(빠른 선택 · 슬라이더 · 미리보기 드래그)로 정해집니다. 여기서는 생성 해상도만 고르세요.", "The result\'s aspect comes from the expansion above (quick presets · sliders · preview drag). Only pick the output resolution here."))
-                        .size(12.0)
-                        .color(TEXT_DIM),
-                );
-                ui.add_space(4.0);
-                let labels = crate::config::size_labels();
-                segmented(ui, &mut self.params.size, &labels);
-                slow_gpu_hint(ui, w, h);
-            });
-            return;
-        }
-        let what = if self.params.custom_size {
-            t!("직접 지정", "Custom")
-        } else if self.params.mode != GenMode::Text && self.params.follow_input_aspect && !self.inputs.is_empty() {
-            t!("입력 비율", "Input aspect")
-        } else {
-            ASPECTS[crate::config::normalize_aspect(self.params.aspect)].label
-        };
-        let summary = format!("{w}×{h} · {what}");
-        fold_card(ui, "size", t!("비율 · 크기", "Aspect · Size"), &summary, true, |ui| {
-            let image_mode = self.params.mode != GenMode::Text;
-            if image_mode && !self.params.custom_size {
-                ui.checkbox(&mut self.params.follow_input_aspect, t!("입력 이미지 비율 따르기", "Follow the input image\'s aspect"));
+    /// Output size at size preset `size`, with everything else as it is now.
+    fn dims_at_size(&self, size: usize) -> (u32, u32) {
+        let p = GenParams { size, custom_size: false, ..self.params.clone() };
+        if p.mode == GenMode::Outpaint {
+            if let Some(i) = self.inputs.first() {
+                let (w, h) = i.size();
+                let canvas = crate::config::padded_size(w, h, p.outpaint);
+                return GenParams { follow_input_aspect: true, ..p }.dimensions_for(Some(canvas));
             }
-            let tiles_on = !self.params.custom_size && !(image_mode && self.params.follow_input_aspect && !self.inputs.is_empty());
-            ui.add_enabled_ui(!self.params.custom_size, |ui| {
-                // One row: the five shapes side by side, so their proportions compare at a glance.
-                let gap = 6.0;
-                let n = ASPECTS.len() as f32;
-                let tile_w = (ui.available_width() - gap * (n - 1.0)) / n;
-                ui.add_enabled_ui(tiles_on, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = gap;
-                        for (i, a) in ASPECTS.iter().enumerate() {
-                            let on = self.params.aspect == i && tiles_on;
-                            let tip = format!("{} {}", a.label, a.hint());
-                            if aspect_tile(ui, on, a.label, a.hint(), a.w, a.h, vec2(tile_w, 74.0)).on_hover_text(tip).clicked() {
-                                self.params.aspect = i;
+        }
+        p.dimensions_for(self.inputs.first().map(|i| i.size()))
+    }
+
+    /// Aspect, size and speed: the three choices most generations change, one row each.
+    fn setup_card(&mut self, ui: &mut Ui) {
+        let ctx = ui.ctx().clone();
+        let (w, h) = self.out_dims();
+        let outpaint = self.params.mode == GenMode::Outpaint;
+        let image_mode = self.params.mode != GenMode::Text;
+        wide_card(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 6.0;
+            if !outpaint {
+                labeled_row(ui, t!("비율", "Aspect"), |ui| {
+                    // In image modes the first chip follows the input image's shape.
+                    let follow = image_mode && self.params.follow_input_aspect;
+                    let n = (ASPECTS.len() + usize::from(image_mode)) as f32;
+                    let gap = 4.0;
+                    ui.spacing_mut().item_spacing.x = gap;
+                    let chip = vec2((ui.available_width() - gap * (n - 1.0)) / n, 32.0);
+                    let enabled = !self.params.custom_size;
+                    if image_mode
+                        && aspect_chip(ui, follow, enabled, t!("입력", "Input"), None, chip)
+                            .on_hover_text(t!("입력 이미지와 같은 비율로 만듭니다", "Uses the input image\'s aspect"))
+                            .clicked()
+                    {
+                        self.params.follow_input_aspect = true;
+                    }
+                    for (i, a) in ASPECTS.iter().enumerate() {
+                        let on = self.params.aspect == i && !follow;
+                        if aspect_chip(ui, on, enabled, a.label, Some((a.w, a.h)), chip).on_hover_text(format!("{} {}", a.label, a.hint())).clicked() {
+                            self.params.aspect = i;
+                            if image_mode {
+                                self.params.follow_input_aspect = false;
                             }
                         }
-                    });
+                    }
                 });
-                ui.add_space(2.0);
-                let labels = crate::config::size_labels();
-                segmented(ui, &mut self.params.size, &labels);
+            }
+
+            labeled_row(ui, t!("크기", "Size"), |ui| {
+                let mut labels = crate::config::size_labels();
+                let mut tips: Vec<String> = (0..SIZES.len())
+                    .map(|s| {
+                        let (w, h) = self.dims_at_size(s);
+                        format!("{w}×{h}")
+                    })
+                    .collect();
+                if !outpaint {
+                    labels.push(t!("직접", "Custom"));
+                    tips.push(t!("너비와 높이를 직접 정합니다", "Set the width and height yourself").to_owned());
+                }
+                let tips: Vec<&str> = tips.iter().map(String::as_str).collect();
+                let custom = self.params.custom_size && !outpaint;
+                let mut idx = if custom { SIZES.len() } else { self.params.size.min(SIZES.len() - 1) };
+                if segmented_tips(ui, &mut idx, &labels, &tips) {
+                    if idx == SIZES.len() {
+                        // Start from the size shown until now.
+                        self.params.width = w;
+                        self.params.height = h;
+                        self.params.custom_size = true;
+                    } else {
+                        self.params.size = idx;
+                        self.params.custom_size = false;
+                    }
+                }
             });
-            ui.checkbox(&mut self.params.custom_size, t!("직접 크기 지정", "Custom size"));
-            if self.params.custom_size {
+            if self.params.custom_size && !outpaint {
                 ui.horizontal(|ui| {
+                    ui.add_space(52.0);
                     ui.label(t!("너비", "Width"));
                     ui.add(egui::DragValue::new(&mut self.params.width).range(256..=2048).speed(32));
                     ui.label(t!("높이", "Height"));
@@ -3017,32 +3089,102 @@ impl StudioApp {
                     if ui.small_button(if cfg!(windows) { "⇄" } else { "↔" }).on_hover_text(t!("가로/세로 바꾸기", "Swap width/height")).clicked() {
                         std::mem::swap(&mut self.params.width, &mut self.params.height);
                     }
+                    ui.label(RichText::new(t!("32의 배수로 맞춤", "multiples of 32")).size(12.0).color(TEXT_FAINT));
                 });
                 self.params.width = snap32(self.params.width);
                 self.params.height = snap32(self.params.height);
-                ui.label(RichText::new(t!("32의 배수로 자동 맞춤 · 큰 해상도는 시간이 오래 걸립니다", "Snapped to multiples of 32 · large sizes take longer")).size(12.0).color(TEXT_FAINT));
+            }
+
+            if outpaint {
+                // Expanding: speed LoRAs, fewer steps, CFG and the step cache made the border
+                // fail more often, so they are fixed.
+                labeled_row(ui, t!("속도", "Speed"), |ui| {
+                    ui.label(RichText::new(t!("정밀 8단계로 고정 (LoRA · CFG · 빠른 생성 사용 안 함)", "Fixed at the precise 8 steps (no LoRA, CFG or faster options)")).size(12.0).color(TEXT_FAINT));
+                });
+            } else {
+                let lightning_ok = matches!(self.params.mode, GenMode::Text | GenMode::Edit);
+                let lightning = crate::lora::LIGHTNING_FILE;
+                let downloading = self.dl.running && self.dl_is_lora && self.dl_lora_file == Some(lightning);
+                let wants_lightning = self.params.loras.iter().any(|l| l.enabled && l.file == lightning);
+                let choice = self.speed_choice();
+                labeled_row(ui, t!("속도", "Speed"), |ui| {
+                    let mut idx = choice;
+                    let labels = [t!("고화질", "Best quality"), t!("빠르게", "Faster"), t!("가장 빠르게", "Fastest")];
+                    let tips = [
+                        t!("기본 8단계를 모두 계산합니다.", "Computes all 8 steps."),
+                        t!(
+                            "Spectrum 단계 캐시: 8단계 중 일부를 예측으로 대신해 약 23% 빨라집니다.\n결과가 아주 조금 달라질 수 있습니다(눈으로는 거의 구분되지 않음).",
+                            "Spectrum step cache: predicts some of the 8 steps, about 23% faster.\nThe result can differ very slightly (hard to see)."
+                        ),
+                        if lightning_ok {
+                            t!(
+                                "Lightning 4단계 LoRA: 단계를 절반으로 줄여 가장 빠릅니다. 디테일은 조금 줄어듭니다.\n파일이 없으면 처음 고를 때 받습니다.",
+                                "Lightning 4-step LoRA: half the steps, the fastest. Slightly less detail.\nDownloaded the first time you pick it."
+                            )
+                        } else {
+                            t!(
+                                "변형·부분수정에서는 4단계를 쓸 수 없습니다 (입력 이미지가 통째로 다시 그려짐).",
+                                "Not available for variation or inpaint (4 steps would redraw the whole input)."
+                            )
+                        },
+                    ];
+                    if segmented_gated(ui, &mut idx, &labels, &tips, &[true, true, lightning_ok]) {
+                        self.set_speed(&ctx, idx);
+                    }
+                });
+                let hint = if downloading {
+                    let pct = if self.dl.total > 0 { self.dl.done * 100 / self.dl.total } else { 0 };
+                    ui.ctx().request_repaint_after(std::time::Duration::from_millis(300));
+                    tf!("Lightning LoRA 받는 중… {pct}% · 받으면 '가장 빠르게'로 바뀝니다", "Downloading the Lightning LoRA… {pct}% · switches to Fastest when done")
+                } else {
+                    match choice {
+                        2 => t!("Lightning 4단계 · 가장 빠름 · 디테일은 조금 줄어듭니다", "Lightning 4 steps · fastest · slightly less detail").to_owned(),
+                        1 if wants_lightning && !lightning_ok => {
+                            t!("이 모드는 4단계를 쓸 수 없어 '빠르게'로 생성합니다", "This mode can\'t use 4 steps: generating with Faster").to_owned()
+                        }
+                        1 => t!("8단계 중 일부를 예측 · 약 23% 빠름 · 화질은 거의 같습니다", "Predicts some of the 8 steps · about 23% faster · nearly the same quality").to_owned(),
+                        _ if wants_lightning && !lightning_ok => {
+                            t!("이 모드는 4단계를 쓸 수 없어 8단계로 생성합니다", "This mode can\'t use 4 steps: generating with 8 steps").to_owned()
+                        }
+                        _ => t!("8단계를 모두 계산 · 화질 우선", "All 8 steps · best quality").to_owned(),
+                    }
+                };
+                // Under the control, at the text's own height (a `horizontal` row would add
+                // the height of a button).
+                ui.allocate_ui_with_layout(vec2(ui.available_width(), 0.0), Layout::left_to_right(Align::Min), |ui| {
+                    ui.add_space(52.0);
+                    ui.add(egui::Label::new(RichText::new(hint).size(12.0).color(if downloading { ACCENT_HOVER } else { TEXT_FAINT })).wrap());
+                });
             }
             slow_gpu_hint(ui, w, h);
         });
     }
 
-    fn seed_card(&mut self, ui: &mut Ui) {
+    /// Settings most generations leave alone: seed, steps, CFG, negative prompt, preview.
+    fn details_card(&mut self, ui: &mut Ui) {
+        let outpaint = self.params.mode == GenMode::Outpaint;
+        let lightning = self.speed_choice() == 2;
         let seed = if self.params.random_seed { t!("랜덤 시드", "Random seed").to_owned() } else { tf!("시드 {}", "Seed {}", self.params.seed) };
-        let summary = tf!("{seed} · {}장", "{seed} · ×{}", self.params.count);
-        fold_card(ui, "seed", t!("시드 · 개수", "Seed · Count"), &summary, true, |ui| {
+        let steps = if lightning {
+            t!("4단계", "4 steps").to_owned()
+        } else if self.params.step_mode == StepMode::Turbo {
+            t!("Turbo 8단계", "Turbo 8 steps").to_owned()
+        } else {
+            tf!("{}단계", "{} steps", self.params.steps)
+        };
+        let summary = if outpaint { seed } else { format!("{seed} · {steps} · CFG {:.1}", self.params.cfg) };
+        // Self-test only: QIS_UNFOLD shows the folded card's contents in the screenshot.
+        let open = self.autotest.is_some() && std::env::var_os("QIS_UNFOLD").is_some();
+        fold_card(ui, if open { "details_test" } else { "details" }, t!("세부 설정", "More settings"), &summary, open, |ui| {
             const LABEL_W: f32 = 40.0;
             const ROW_H: f32 = 32.0;
-            let row_label = |ui: &mut Ui, text: &str| {
-                ui.allocate_ui_with_layout(vec2(LABEL_W, ROW_H), Layout::left_to_right(Align::Center), |ui| {
-                    ui.set_min_size(vec2(LABEL_W, ROW_H));
-                    ui.label(RichText::new(text).size(13.0).color(TEXT_DIM));
-                });
-            };
-
-            // 시드: [랜덤 | 고정] [seed number ............] [🎲]
+            // 시드: [랜덤 | 고정] [seed number ............] [dice]
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 6.0;
-                row_label(ui, t!("시드", "Seed"));
+                ui.allocate_ui_with_layout(vec2(LABEL_W, ROW_H), Layout::left_to_right(Align::Center), |ui| {
+                    ui.set_min_size(vec2(LABEL_W, ROW_H));
+                    ui.label(RichText::new(t!("시드", "Seed")).size(13.0).color(TEXT_DIM));
+                });
                 let mut fixed = usize::from(!self.params.random_seed);
                 ui.allocate_ui(vec2(132.0, ROW_H), |ui| {
                     if segmented(ui, &mut fixed, &[t!("랜덤", "Random"), t!("고정", "Fixed")]) {
@@ -3059,197 +3201,164 @@ impl StudioApp {
                     )
                     .on_hover_text(t!("드래그하거나 더블클릭해서 숫자를 입력하세요", "Drag, or double-click to type a number"));
                 });
-                if ui
-                    .add_sized(vec2(ROW_H, ROW_H), egui::Button::new(RichText::new("🎲").size(15.0)))
-                    .on_hover_text(t!("새 시드를 뽑아 고정합니다", "Pick a new seed and fix it"))
-                    .clicked()
-                {
+                let (rect, resp) = ui.allocate_exact_size(vec2(ROW_H, ROW_H), Sense::click());
+                let hot = resp.hovered();
+                ui.painter().rect_filled(rect, 8, if hot { WIDGET_HOVER } else { WIDGET });
+                paint_icon(ui.painter(), rect.center(), 15.0, Icon::Dice, if hot { Color32::WHITE } else { TEXT });
+                if resp.on_hover_cursor(CursorIcon::PointingHand).on_hover_text(t!("새 시드를 뽑아 고정합니다", "Pick a new seed and fix it")).clicked() {
                     self.params.seed = rand::random::<u32>() as u64;
                     self.params.random_seed = false;
                 }
             });
-            ui.add_space(4.0);
+            if outpaint {
+                return; // steps, CFG and the negative prompt are fixed while expanding
+            }
+            ui.add_space(6.0);
 
-            // 개수: [1][2]…[8]
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 6.0;
-                row_label(ui, t!("개수", "Count"));
-                const COUNTS: [&str; 8] = ["1", "2", "3", "4", "5", "6", "7", "8"];
-                let mut idx = (self.params.count.clamp(1, 8) - 1) as usize;
-                if segmented(ui, &mut idx, &COUNTS) {
-                    self.params.count = idx as u32 + 1;
+            ui.label(RichText::new(t!("샘플링 단계", "Sampling steps")).size(13.0));
+            ui.add_enabled_ui(!lightning, |ui| {
+                let mut mode = if self.params.step_mode == StepMode::Turbo { 0 } else { 1 };
+                if segmented(ui, &mut mode, &[t!("Turbo 8단계 (권장)", "Turbo 8 steps (recommended)"), t!("직접 지정", "Custom")]) {
+                    self.params.step_mode = if mode == 0 { StepMode::Turbo } else { StepMode::Custom };
                 }
-            });
-        });
-    }
-
-    fn advanced_card(&mut self, ui: &mut Ui) {
-        let steps = if self.params.step_mode == StepMode::Turbo { t!("Turbo 8단계", "Turbo 8 steps").to_owned() } else { tf!("{}단계", "{} steps", self.params.steps) };
-        let summary = format!("{steps} · CFG {:.1}", self.params.cfg);
-        fold_card(ui, "advanced", t!("고급 설정", "Advanced settings"), &summary, false, |ui| {
-            {
-                    ui.label(RichText::new(t!("샘플링 단계", "Sampling steps")).size(13.0));
-                    let mut mode = if self.params.step_mode == StepMode::Turbo { 0 } else { 1 };
-                    if segmented(ui, &mut mode, &[t!("Turbo 8단계 (권장)", "Turbo 8 steps (recommended)"), t!("직접 지정", "Custom")]) {
-                        self.params.step_mode = if mode == 0 { StepMode::Turbo } else { StepMode::Custom };
-                    }
-                    if self.params.step_mode == StepMode::Custom {
-                        ui.horizontal(|ui| {
-                            ui.add(egui::Slider::new(&mut self.params.steps, 4..=40).text(t!("단계", "Steps")));
-                            if reset_button(ui, true, t!("공식 권장값 Turbo 8단계로 되돌리기", "Reset to the official Turbo 8 steps")) {
-                                self.params.step_mode = StepMode::Turbo;
-                                self.params.steps = GenParams::default().steps;
-                            }
-                        });
-                    }
-                    ui.add_space(4.0);
+                if self.params.step_mode == StepMode::Custom {
                     ui.horizontal(|ui| {
-                        ui.label("CFG");
-                        ui.add(egui::Slider::new(&mut self.params.cfg, 1.0..=8.0).step_by(0.5));
-                        let rec = GenParams::default().cfg;
-                        if reset_button(ui, (self.params.cfg - rec).abs() > 1e-3, t!("공식 권장값 CFG 1.0으로 되돌리기 (Turbo)", "Reset to the official CFG 1.0 (Turbo)")) {
-                            self.params.cfg = rec;
+                        ui.add(egui::Slider::new(&mut self.params.steps, 4..=40).text(t!("단계", "Steps")));
+                        if reset_button(ui, true, t!("공식 권장값 Turbo 8단계로 되돌리기", "Reset to the official Turbo 8 steps")) {
+                            self.params.step_mode = StepMode::Turbo;
+                            self.params.steps = GenParams::default().steps;
                         }
                     });
-                    ui.label(
-                        RichText::new(t!("Turbo는 CFG 1에 맞춰져 있습니다. 올리면 네거티브 프롬프트가 적용되지만 시간이 약 2배 걸립니다.", "Turbo is tuned for CFG 1. Raising it applies the negative prompt but takes about twice as long."))
-                            .size(12.0)
-                            .color(TEXT_FAINT),
-                    );
-                    ui.checkbox(&mut self.params.live_preview, t!("생성 중 실시간 미리보기", "Live preview while generating"));
-                    ui.add_space(4.0);
-                    let d = GenParams::default();
-                    let off = (self.params.cfg - d.cfg).abs() > 1e-3
-                        || self.params.step_mode != d.step_mode
-                        || (self.params.strength - d.strength).abs() > 1e-3
-                        || (self.params.inpaint_strength - d.inpaint_strength).abs() > 1e-3
-                        || self.params.loras.iter().any(|l| (l.weight - 1.0).abs() > 1e-3)
-                        || self.params.live_preview != d.live_preview;
-                    let resp = ui
-                        .add_enabled(off, egui::Button::new(RichText::new(if off { t!("↺ 모두 권장값으로", "↺ All recommended") } else { os_t!("✓ 모두 권장값입니다", "✓ All recommended", "✔ 모두 권장값입니다", "✔ All recommended") }).size(13.0)))
-                        .on_hover_text(
-                            "Turbo 8단계 · CFG 1.0 (공식 권장)\n변형 강도 0.60 · 수정 강도 0.85 · LoRA 강도 1.00 · 실시간 미리보기 켬\n\
-                             프롬프트·크기·시드는 그대로 둡니다.",
-                        )
-                        .on_disabled_hover_text(t!("모든 값이 권장값입니다.", "Every value is at its recommended setting."));
-                    if resp.clicked() {
-                        self.params.cfg = d.cfg;
-                        self.params.step_mode = d.step_mode;
-                        self.params.steps = d.steps;
-                        self.params.strength = d.strength;
-                        self.params.inpaint_strength = d.inpaint_strength;
-                        self.params.live_preview = d.live_preview;
-                        for l in &mut self.params.loras {
-                            l.weight = 1.0;
-                        }
-                        self.toast(t!("권장값으로 되돌렸습니다", "Reset to recommended values"), ACCENT_HOVER);
-                    }
+                }
+            });
+            if lightning {
+                ui.label(RichText::new(t!("속도가 '가장 빠르게'일 때는 Lightning 4단계로 고정됩니다.", "With the Fastest speed, steps are fixed at Lightning\'s 4.")).size(12.0).color(TEXT_FAINT));
+            }
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                ui.label("CFG");
+                ui.add(egui::Slider::new(&mut self.params.cfg, 1.0..=8.0).step_by(0.5));
+                let rec = GenParams::default().cfg;
+                if reset_button(ui, (self.params.cfg - rec).abs() > 1e-3, t!("공식 권장값 CFG 1.0으로 되돌리기 (Turbo)", "Reset to the official CFG 1.0 (Turbo)")) {
+                    self.params.cfg = rec;
+                }
+            });
+            ui.label(
+                RichText::new(t!("Turbo는 CFG 1에 맞춰져 있습니다. 올리면 네거티브 프롬프트가 적용되지만 시간이 약 2배 걸립니다.", "Turbo is tuned for CFG 1. Raising it applies the negative prompt but takes about twice as long."))
+                    .size(12.0)
+                    .color(TEXT_FAINT),
+            );
+            ui.add_space(4.0);
+
+            ui.label(RichText::new(t!("네거티브 프롬프트", "Negative prompt")).size(13.0));
+            ui.add(
+                TextEdit::multiline(&mut self.params.negative_prompt)
+                    .hint_text(t!("피하고 싶은 요소 (예: 흐릿함, 저화질, 글자 깨짐)", "Things to avoid (e.g. blurry, low quality, broken text)"))
+                    .desired_rows(2)
+                    .desired_width(f32::INFINITY),
+            );
+            if self.params.cfg <= 1.0 && !self.params.negative_prompt.trim().is_empty() {
+                ui.label(RichText::new(t!("CFG가 1이면 네거티브 프롬프트는 적용되지 않습니다. 위에서 CFG를 올리세요.", "With CFG 1 the negative prompt has no effect. Raise CFG above.")).size(12.0).color(AMBER));
+            }
+            ui.add_space(4.0);
+
+            ui.checkbox(&mut self.params.live_preview, t!("생성 중 실시간 미리보기", "Live preview while generating"));
+            ui.add_space(4.0);
+            let d = GenParams::default();
+            let off = (self.params.cfg - d.cfg).abs() > 1e-3
+                || self.params.step_mode != d.step_mode
+                || (self.params.strength - d.strength).abs() > 1e-3
+                || (self.params.inpaint_strength - d.inpaint_strength).abs() > 1e-3
+                || self.params.loras.iter().any(|l| (l.weight - 1.0).abs() > 1e-3)
+                || self.params.live_preview != d.live_preview;
+            let resp = ui
+                .add_enabled(off, egui::Button::new(RichText::new(if off { t!("↺ 모두 권장값으로", "↺ All recommended") } else { os_t!("✓ 모두 권장값입니다", "✓ All recommended", "✔ 모두 권장값입니다", "✔ All recommended") }).size(13.0)))
+                .on_hover_text(t!(
+                    "Turbo 8단계 · CFG 1.0 (공식 권장)\n변형 강도 0.60 · 수정 강도 0.85 · LoRA 강도 1.00 · 실시간 미리보기 켬\n프롬프트·크기·시드·속도는 그대로 둡니다.",
+                    "Turbo 8 steps · CFG 1.0 (official)\nVariation strength 0.60 · inpaint strength 0.85 · LoRA strength 1.00 · live preview on\nPrompt, size, seed and speed stay as they are."
+                ))
+                .on_disabled_hover_text(t!("모든 값이 권장값입니다.", "Every value is at its recommended setting."));
+            if resp.clicked() {
+                self.params.cfg = d.cfg;
+                self.params.step_mode = d.step_mode;
+                self.params.steps = d.steps;
+                self.params.strength = d.strength;
+                self.params.inpaint_strength = d.inpaint_strength;
+                self.params.live_preview = d.live_preview;
+                for l in &mut self.params.loras {
+                    l.weight = 1.0;
+                }
+                self.toast(t!("권장값으로 되돌렸습니다", "Reset to recommended values"), ACCENT_HOVER);
             }
         });
     }
 
     fn action_area(&mut self, ui: &mut Ui) {
-        let mut switch_to = None;
-        ui.horizontal(|ui| {
-            let tip = "Spectrum 단계 캐시: 8단계 중 일부를 예측으로 대신해 약 23% 빨라집니다.\n\
-                       결과가 아주 조금 달라질 수 있습니다(눈으로는 거의 구분되지 않음).";
-            if self.params.mode == GenMode::Outpaint {
-                ui.label(RichText::new(t!("아웃페인팅: 정밀 8단계 (빠른 모드 사용 안 함)", "Expand: precise 8 steps (no fast mode)")).size(12.5).color(TEXT_FAINT));
-            } else if self.lightning_applies() {
-                // Lightning's 4 steps all fall in the step cache's warm-up: it would do nothing.
-                // The switch keeps its setting and works again once Lightning is off.
-                let why = t!(
-                    "Lightning 4단계는 단계가 4개뿐이라, 빠른 모드(Spectrum 캐시)가 건너뛸 단계가 없습니다.\nLightning을 끄면 빠른 모드가 다시 적용됩니다.",
-                    "Lightning has only 4 steps, so fast mode (Spectrum cache) has no step to skip.\nTurn Lightning off and fast mode applies again."
-                );
-                ui.add_enabled_ui(false, |ui| {
-                    let mut on = self.params.fast_mode;
-                    switch(ui, &mut on);
-                    ui.label(RichText::new(t!("⚡ 빠른 모드", "⚡ Fast mode")).size(13.5).color(TEXT_FAINT));
-                })
-                .response
-                .on_disabled_hover_text(why);
-                ui.label(RichText::new(t!("Lightning 사용 중 · 효과 없음", "Lightning on · no effect")).size(12.0).color(TEXT_FAINT))
-                    .on_hover_text(why);
-            } else {
-            switch(ui, &mut self.params.fast_mode).on_hover_text(tip);
-            let on = self.params.fast_mode;
-            let label = ui
-                .add(
-                    egui::Label::new(RichText::new(t!("⚡ 빠른 모드", "⚡ Fast mode")).size(13.5).color(if on { Color32::WHITE } else { TEXT_DIM }))
-                        .sense(Sense::click()),
-                )
-                .on_hover_text(tip);
-            if label.clicked() {
-                self.params.fast_mode = !self.params.fast_mode;
-            }
-            let on = self.params.fast_mode;
-            ui.label(RichText::new(if on { t!("켜짐", "On") } else { t!("꺼짐", "Off") }).size(12.0).color(if on { ACCENT_HOVER } else { TEXT_FAINT }));
-            }
-
-            // Only the CUDA build runs the INT8 model: elsewhere there is nothing to pick.
-            if self.settings.int8_supported() {
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                let current = self.settings.variant;
-                ui.menu_button(RichText::new(tf!("모델: {} {}", "Model: {} {}", self.settings.variant_label(), if cfg!(windows) { "▾" } else { "⏷" })).size(12.0), |ui| {
-                    ui.set_min_width(300.0);
-                    for (v, title, desc) in [
-                        (
-                            ModelVariant::Q4,
-                            if self.settings.small_diffusion() { t!("표준 · Q3_K_S (저사양 PC용)", "Standard · Q3_K_S (for low-end PCs)") } else { t!("표준 · Q4_K_M", "Standard · Q4_K_M") },
-                            t!("RAM을 적게 씀 · 장당 약 19초", "Less RAM · about 19 s per image"),
-                        ),
-                        // The speed figures were measured on NVIDIA (RTX 3060 Ti); AMD gets none.
-                        if self.settings.backend() == GpuBackend::Cuda {
-                            (ModelVariant::Int8, t!("고화질·고속 · INT8 ConvRot", "High quality · fast · INT8 ConvRot"), t!("반복 생성 장당 약 12.5초 · 원본에 더 가까운 화질", "Repeat generations about 12.5 s each · closer to the original quality"))
-                        } else {
-                            (ModelVariant::Int8, t!("고화질 · INT8 ConvRot", "High quality · INT8 ConvRot"), t!("원본에 더 가까운 화질 · 속도는 GPU와 메모리 배치에 따라 달라집니다", "Closer to the original quality · speed depends on the GPU and memory placement"))
-                        },
-                    ] {
-                        let mark = if v == current { "✔ " } else { "    " };
-                        let r = ui.add(
-                            egui::Button::new(
-                                RichText::new(format!("{mark}{title}\n      {desc}")).size(13.0),
-                            )
-                            .frame(false),
-                        );
-                        if r.clicked() {
-                            switch_to = Some(v);
-                            ui.close();
+        // Only the CUDA and supported ROCm builds run the INT8 model: elsewhere there is nothing to pick.
+        if self.settings.int8_supported() {
+            let mut switch_to = None;
+            ui.horizontal(|ui| {
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    let current = self.settings.variant;
+                    ui.menu_button(RichText::new(tf!("모델: {} {}", "Model: {} {}", self.settings.variant_label(), if cfg!(windows) { "▾" } else { "⏷" })).size(12.0), |ui| {
+                        ui.set_min_width(300.0);
+                        for (v, title, desc) in [
+                            (
+                                ModelVariant::Q4,
+                                if self.settings.small_diffusion() { t!("표준 · Q3_K_S (저사양 PC용)", "Standard · Q3_K_S (for low-end PCs)") } else { t!("표준 · Q4_K_M", "Standard · Q4_K_M") },
+                                t!("RAM을 적게 씀 · 장당 약 19초", "Less RAM · about 19 s per image"),
+                            ),
+                            // The speed figures were measured on NVIDIA (RTX 3060 Ti); AMD gets none.
+                            if self.settings.backend() == GpuBackend::Cuda {
+                                (ModelVariant::Int8, t!("고화질·고속 · INT8 ConvRot", "High quality · fast · INT8 ConvRot"), t!("반복 생성 장당 약 12.5초 · 원본에 더 가까운 화질", "Repeat generations about 12.5 s each · closer to the original quality"))
+                            } else {
+                                (ModelVariant::Int8, t!("고화질 · INT8 ConvRot", "High quality · INT8 ConvRot"), t!("원본에 더 가까운 화질 · 속도는 GPU와 메모리 배치에 따라 달라집니다", "Closer to the original quality · speed depends on the GPU and memory placement"))
+                            },
+                        ] {
+                            let mark = if v == current { "✔ " } else { "    " };
+                            let r = ui.add(egui::Button::new(RichText::new(format!("{mark}{title}\n      {desc}")).size(13.0)).frame(false));
+                            if r.clicked() {
+                                switch_to = Some(v);
+                                ui.close();
+                            }
                         }
-                    }
-                })
-                .response
-                .on_hover_text(t!("생성 모델 바꾸기 (엔진이 다시 시작됩니다)", "Switch generation model (restarts the engine)"));
+                    })
+                    .response
+                    .on_hover_text(t!("생성 모델 바꾸기 (엔진이 다시 시작됩니다)", "Switch generation model (restarts the engine)"));
+                });
             });
+            if let Some(v) = switch_to {
+                self.switch_variant(ui.ctx(), v);
             }
-        });
-        if let Some(v) = switch_to {
-            self.switch_variant(ui.ctx(), v);
         }
         let busy = self.active.is_some() || !self.queue.is_empty();
         let ready = self.engine_usable();
-        let label = if busy { t!("＋  대기열에 추가", "＋  Add to queue") } else { t!("✨  이미지 생성", "✨  Generate") };
-        let n = self.params.count;
+        let n = self.params.count.clamp(1, 8);
         let prompts = if self.params.batch && self.params.mode != GenMode::Outpaint {
             self.params.prompt.lines().filter(|l| !l.trim().is_empty()).count().max(1)
         } else {
             1
         };
-        let label = match (prompts, n) {
-            (1, 1) => label.to_owned(),
-            (1, n) => tf!("{label} ({n}장)", "{label} ({n} images)"),
-            (p, n) => tf!("{label} ({p}개 × {n}장)", "{label} ({p} × {n} images)"),
-        };
+        let label = if busy { t!("＋  대기열에 추가", "＋  Add to queue") } else { t!("이미지 생성", "Generate") };
+        // The count sits in the stepper beside the button; only a multi-prompt run spells out the total.
+        let label = if prompts > 1 { tf!("{label} ({prompts}개 × {n}장)", "{label} ({prompts} × {n} images)") } else { label.to_owned() };
         // When the engine can't take jobs, the button says why instead.
-        let label = match &self.engine_state {
-            EngineState::Stopped => t!("엔진이 꺼져 있습니다 · 상단 상태 표시를 눌러 시작", "Engine is off · click the status at the top to start").to_owned(),
-            EngineState::Error(_) => t!("엔진 오류 · 상단 상태 표시를 눌러 재시작", "Engine error · click the status at the top to restart").to_owned(),
-            _ => label,
+        let (label, icon) = match &self.engine_state {
+            EngineState::Stopped => (t!("엔진 꺼짐 · 상단 상태 표시를 눌러 시작", "Engine off · click the status at the top").to_owned(), None),
+            EngineState::Error(_) => (t!("엔진 오류 · 상단 상태 표시를 눌러 재시작", "Engine error · click the status at the top").to_owned(), None),
+            _ => (label, (!busy).then_some(Icon::Sparkle)),
         };
-        if primary_button(ui, &label, 46.0, ready).on_hover_text("Ctrl + Enter").clicked() {
-            self.generate();
-        }
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 8.0;
+            let mut count = n;
+            let text = tf!("{n}장", "×{n}");
+            if stepper(ui, &mut count, 1..=8, &text, 46.0, t!("한 번에 만들 장수 (여러 프롬프트면 프롬프트마다)", "Images per run (per prompt with multiple prompts)")) {
+                self.params.count = count;
+            }
+            if primary_button_icon(ui, icon, &label, 46.0, ready).on_hover_text("Ctrl + Enter").clicked() {
+                self.generate();
+            }
+        });
         ui.horizontal(|ui| {
             let pending = self.queue.len() + usize::from(self.active.is_some());
             if pending > 0 {
@@ -4286,7 +4395,7 @@ impl StudioApp {
                     r.height,
                     r.seed,
                     r.sigmas.len().saturating_sub(1).max(1),
-                    if r.fast { t!(" · ⚡빠른 모드", " · ⚡fast mode") } else { "" },
+                    if r.fast { t!(" · 빠르게", " · Faster") } else { "" },
                     if r.loras.is_empty() { String::new() } else { tf!(" · LoRA {}개", " · LoRA {}", r.loras.len()) }
                 ))
                 .size(12.0)
@@ -4595,13 +4704,13 @@ impl eframe::App for StudioApp {
 
 // ---------------------------------------------------------------------- free helpers
 
-/// Under the size picker on a GTX card when the size is above "Fast".
+/// Under the size picker on a GTX card when the size is above Small.
 fn slow_gpu_hint(ui: &mut Ui, w: u32, h: u32) {
     if crate::config::slow_for_gpu(w, h) {
         ui.label(
             RichText::new(t!(
-                "⚠ GTX 그래픽카드는 느립니다: 이 크기는 장당 몇 분 걸릴 수 있어요 · '빠름' 권장",
-                "⚠ GTX graphics cards are slow: this size can take minutes per image · \"Fast\" recommended"
+                "⚠ GTX 그래픽카드는 느립니다: 이 크기는 장당 몇 분 걸릴 수 있어요 · '작게' 권장",
+                "⚠ GTX graphics cards are slow: this size can take minutes per image · Small recommended"
             ))
             .size(12.0)
             .color(AMBER),
@@ -4652,7 +4761,7 @@ mod scene_tests {
 }
 
 fn mode_tag(e: &HistoryEntry) -> String {
-    let fast = if e.fast { t!("⚡빠른 모드 · ", "⚡Fast · ") } else { "" };
+    let fast = if e.fast { t!("빠르게 · ", "Faster · ") } else { "" };
     let mode = match e.mode {
         GenMode::Text => String::new(),
         GenMode::Variation => tf!("변형 {:.2} · ", "Variation {:.2} · ", e.strength),

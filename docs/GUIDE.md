@@ -78,7 +78,7 @@ Once provisioning completes, the engine starts automatically and "Engine ready �
 
 ## 3. Control panel
 
-From top to bottom: **modes → input image → prompt → aspect/size → seed/count → advanced → LoRA**, with the **fast mode · model · Generate** area pinned at the bottom. Each card folds by clicking its title, and a folded card keeps summarizing its current values on the title line.
+From top to bottom: **modes → input image → prompt → aspect/size/speed → more settings → LoRA**, with the **count · Generate** area pinned at the bottom. The More settings and LoRA cards open and fold by clicking their title, and a folded card keeps summarizing its current values on the title line.
 
 ### 3.1 Generation modes
 
@@ -97,8 +97,8 @@ From top to bottom: **modes → input image → prompt → aspect/size → seed/
 
 | Element | Function |
 |---|---|
-| **📋 Paste** | Uses the clipboard image as input (Ctrl+V). |
-| **📂 Open** | File picker (png, jpg, webp, bmp; multi-select). |
+| **Paste** | Uses the clipboard image as input (Ctrl+V). |
+| **Open** | File picker (png, jpg, webp, bmp; multi-select). |
 | Drop zone | Drop an image or click to choose one. Gallery right-click → **Use as input image** also works. |
 | ✕ on a thumbnail | Removes that input. |
 | **＋** (Edit mode) | Adds a reference image. Up to 3; the index badge (1, 2, 3) is how the prompt refers to them ("image 1", "the second image"). |
@@ -119,59 +119,58 @@ From top to bottom: **modes → input image → prompt → aspect/size → seed/
 - **🖌 Back to mask editing**: returns from the result view to the mask editor.
 
 **Expand only**
-- **Quick presets**: `↔ 16:9` (horizontal) · `↕ 9:16` (vertical) · `⬜ 1:1` (square) · `4:3` · `⤢ Zoom out` (1.5× on all sides). If the input already has that aspect, it expands slightly on all sides.
+- **Quick presets**: `↔ 16:9` (horizontal) · `↕ 9:16` (vertical) · `1:1` (square) · `4:3` · `⤢ Zoom out` (1.5× on all sides). If the input already has that aspect, it expands slightly on all sides.
 - **Left · Right · Top · Bottom** sliders (0–100 %): per-side expansion. Also adjustable by dragging in the canvas preview.
 - Resolution line: source → result resolution, number of passes and estimated time.
 - **Switch to INT8**: shown when the INT8 model is present and the engine is NVIDIA CUDA; expansion runs about 35 % faster.
 - **↔ Back to expand preview**: returns from the result view to the expand preview.
-- To minimize failures, Expand is fixed to Turbo 8 steps · CFG 1 · LoRA off · fast mode off, so the advanced and LoRA cards are hidden.
+- To minimize failures, Expand is fixed to Turbo 8 steps · CFG 1 · LoRA off · step cache off: the speed row says so, More settings keeps only the seed, and the LoRA card is hidden.
 
 ### 3.3 Prompt card
 
 | Element | Function |
 |---|---|
-| **✨ Example** | Inserts an example prompt for the current mode, cycling on each click. |
-| **🖼 Describe photo** (Expand) | Captions the input image on the GPU and inserts the scene description (about 20 s). Deferred until a running generation finishes. |
+| **Example** | Inserts an example prompt for the current mode, cycling on each click. |
+| **Describe photo** (Expand) | Captions the input image on the GPU and inserts the scene description (about 20 s). Deferred until a running generation finishes. |
 | **Text** | Appends a template for rendering text inside the image. Replace `"YOUR TEXT"` with the desired wording. |
-| **🕘 Recent** | Prompt history (15 shown, 30 kept). Click to reuse, ✕ next to an entry to delete it, **🗑 Clear all recent prompts** to purge the history. |
+| **Recent** | Prompt history (15 shown, 30 kept). Click to reuse, ✕ next to an entry to delete it, **Clear all recent prompts** to purge the history. |
 | **✕** | Clears the prompt field. |
 | Prompt field | Shows mode-specific authoring guidance as placeholder text, with a character count below. |
 | **Multiple prompts** | One prompt per line, generated in order. The image count applies per prompt. |
-| **💡 Tips** | On hover, six prompt-writing tips validated through same-seed comparisons. |
-| **Negative prompt** | Elements to exclude (blurry, low quality, …). Ineffective at CFG 1; raise CFG under Advanced settings. |
+| **Tips** | On hover, six prompt-writing tips validated through same-seed comparisons. |
 
 - In Expand, the prompt may be **left empty**: PNGs produced by this app supply the scene description stored in their metadata, and other photos are captioned automatically. Prompts typed by the user are never overwritten.
 
-### 3.4 Aspect · Size card
+### 3.4 Aspect · Size · Speed card
+
+The three choices most generations change, one row each.
+
+| Row | Function |
+|---|---|
+| **Aspect** | `1:1` square · `4:3` landscape · `3:4` portrait · `16:9` wide · `9:16` vertical video. In image-based modes an **Input** chip comes first (the input image's aspect, the default). |
+| **Size** | **Small / Medium / Large** set the output resolution (about 0.5 / 1.0 / 1.6 megapixels); Medium is the default (1024×1024 at 1:1). Hovering shows the pixel size. **Custom** takes an explicit width and height (256–2048, snapped to multiples of 32; ⇄ swaps them). |
+| **Speed** | **Best quality**: computes all 8 steps. **Faster**: a Spectrum step cache replaces some of the 8 steps with predictions, about 23 % faster with barely perceptible deviations. **Fastest**: the Lightning 4-step LoRA halves the steps, with slightly less detail. The LoRA file is downloaded the first time it is picked. |
+
+- Speed is one choice of three: Lightning's 4 steps all fall in the step cache's warm-up, so combining the two would not be any faster.
+- **Fastest** is unavailable in Variation and Inpaint (a 4-step schedule redraws the whole input). If it was picked in another mode, these modes generate with **Faster**.
+- In Expand, the output aspect ratio is determined by the expansion, so only the size is selected, and the speed is fixed at the precise 8 steps.
+
+### 3.5 More settings card (folded by default)
 
 | Element | Function |
 |---|---|
-| **Follow the input image's aspect** | In image-based modes (on by default), keeps the input's aspect ratio. |
-| Aspect tiles | `1:1` square · `4:3` landscape · `3:4` portrait · `16:9` wide · `9:16` vertical video. |
-| **Fast / Standard / High res** | Output resolution (about 0.5 / 1.0 / 1.6 megapixels). Standard by default (1024×1024 at 1:1). |
-| **Custom size** | Explicit width and height (256–2048, snapped to multiples of 32). ⇄ swaps them. |
-
-In Expand, the output aspect ratio is determined by the expansion, so only the resolution is selected here.
-
-### 3.5 Seed · Count card
-
-| Element | Function |
-|---|---|
-| **Random / Fixed** | Random draws a new seed per generation; Fixed reproduces results deterministically. The last seed remains in the field after a random run, so switching to Fixed reproduces it immediately. |
+| **Seed: Random / Fixed** | Random draws a new seed per generation; Fixed reproduces results deterministically. The last seed remains in the field after a random run, so switching to Fixed reproduces it immediately. |
 | Seed value | Drag or double-click to edit. Batches use seed, seed+1, … |
-| 🎲 | Draws a new seed and fixes it. |
-| **Count 1–8** | Images per request. |
-
-### 3.6 Advanced settings card (folded by default)
-
-| Element | Function |
-|---|---|
-| **Sampling steps** | **Turbo 8 steps (recommended)** or **Custom** (4–40). |
+| Dice button | Draws a new seed and fixes it. |
+| **Sampling steps** | **Turbo 8 steps (recommended)** or **Custom** (4–40). With the **Fastest** speed, steps are fixed at Lightning's 4. |
 | **CFG** | 1.0–8.0 (default 1.0). The Turbo model is tuned for CFG 1. Higher values enable the negative prompt at roughly twice the generation time. |
+| **Negative prompt** | Elements to exclude (blurry, low quality, …). Ineffective at CFG 1; raise CFG. |
 | **Live preview while generating** | Displays intermediate results at each sampling step (on by default). |
-| **↺ All recommended** | Restores steps, CFG, strengths, LoRA strength and live preview to their recommended values. Prompt, resolution and seed are kept. |
+| **↺ All recommended** | Restores steps, CFG, strengths, LoRA strength and live preview to their recommended values. Prompt, resolution, seed and speed are kept. |
 
-### 3.7 LoRA card
+In Expand only the seed is shown.
+
+### 3.6 LoRA card (folded by default)
 
 A LoRA is a lightweight adapter that adds a specific capability to the base model. Files in `models/loras` are listed here.
 
@@ -180,7 +179,7 @@ A LoRA is a lightweight adapter that adds a specific capability to the base mode
 | **Open folder** | Opens the LoRA directory. Place `.safetensors` files there. |
 | ⟳ | Rescans the directory. New files are usable immediately, without restarting the engine. |
 | Checkbox + name | Enable/disable. The value on the right is the **strength** (0.00–2.00, default 1.00). |
-| **Lightning 4-step** | 4-step sampling at about 12 s per image (8 steps: about 18 s). Excluded automatically in Variation and Inpaint. |
+| **Lightning 4-step** | The same setting as the **Fastest** speed (changing either changes both). 4-step sampling at about 12 s per image (8 steps: about 18 s). Excluded automatically in Variation and Inpaint. |
 | **Edit consistency** | Locks the composition and positions of an edit to the source. Disable it for large object removal or pose changes. Edit mode only. |
 | **Multiple angles** | Re-shoots a single input from another camera angle (background switches to a grey studio). Enables a **camera direction dial** (12 directions), **Camera height** (eye level · 30° · 60° · top) and **Closer (close-up)**, and composes the prompt from the selection. If the angle does not change, lower the strength to 0.8. Edit mode only. |
 | **To Edit mode** | Shortcut shown when an edit-only LoRA is enabled in another mode. |
@@ -188,13 +187,13 @@ A LoRA is a lightweight adapter that adds a specific capability to the base mode
 
 Mutually exclusive LoRAs (two speed LoRAs, or "Edit consistency" with "Multiple angles") disable each other, with a notification.
 
-### 3.8 Pinned bottom area: fast mode · model · Generate
+### 3.7 Pinned bottom area: model · count · Generate
 
 | Element | Function |
 |---|---|
-| **⚡ Fast mode** | A Spectrum step cache replaces some of the 8 steps with predictions for about a 23 % speed-up, with deviations that are barely perceptible. Not applied in Expand. |
+| **− ×n +** | Images per request (1–8). With multiple prompts it applies per prompt. |
 | **Model: … ▾** | **Standard · Q4_K_M** (minimal RAM use) or **High quality · fast · INT8 tensor core** (faster repeated generation, quality closer to the original model). Switching restarts the engine (about 40 s). Missing model files can be downloaded from Settings. Shown only with the NVIDIA CUDA engine. |
-| **✨ Generate** | Submits a request (Ctrl+Enter). While generating it becomes **＋ Add to queue** for sequential processing; requests can be queued even while the model is loading. |
+| **Generate** | Submits a request (Ctrl+Enter). While generating it becomes **＋ Add to queue** for sequential processing; requests can be queued even while the model is loading. |
 | Status line | Resolution · seed · LoRA count · estimated time per image. With jobs active: **N in progress** and **■ Cancel all**. |
 
 When a request is rejected, a notification states why (missing prompt, missing input image, no inpaint mask, …).

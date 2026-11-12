@@ -90,7 +90,7 @@ Engineering notes. Every figure below was measured in the app on an RTX 3060 Ti 
 
 - **Resident, pinned engine.** stable-diffusion.cpp's `sd-server` runs as a managed child process with a fixed placement: weights mirrored in RAM and a 6 GB VRAM cap. The auto-fit placement sometimes failed, or re-read the model from SSD for every image (+6 s), depending on how much RAM was free at startup. Pinned placement gives the same speed every time.
 - **Warm start.** A one-step warm-up at launch loads the weights before you click, so the first image is as fast as the tenth.
-- **INT8 tensor cores.** Optional INT8 ConvRot weights take a step from **1.66 s to 1.02 s**. Same-prompt repeats drop to **~12.5 s**, or **~10.5 s** with ⚡ Fast mode (Spectrum step cache, −23% sampling).
+- **INT8 tensor cores.** Optional INT8 ConvRot weights take a step from **1.66 s to 1.02 s**. Same-prompt repeats drop to **~12.5 s**, or **~10.5 s** with the **Faster** speed (Spectrum step cache, −23% sampling).
 - **Expand without seams.** The new area is generated against a grey-padded reference of the source with a 3% overlap mask. The result is enlarged up to 1.6× and the original is composited back with a smoothstep feather, so the source part is never re-encoded. Wide zooms are split into equal passes (≤3× area, ≤1.6× when three or more sides grow).
 - **A blank-fill detector.** At 1/8 scale it compares the structure in the new band with the source next to it. On 28 test outputs it caught **all 8 failures with zero false alarms** (plain walls and studio backdrops pass), and a failed pass is redrawn with a new seed up to twice.
 - **GPU scheduling, not GPU fighting.** The 7.5 GB photo describer only runs while the image engine is idle. A generate click made meanwhile waits for it and then starts on its own. Every child process is tied to a Windows Job Object (on Linux: `PR_SET_PDEATHSIG`), so nothing outlives the app.
@@ -105,7 +105,7 @@ Engineering notes. Every figure below was measured in the app on an RTX 3060 Ti 
 |---|---|---|
 | Q4_K_M (default) | ~19 s | ~19 s |
 | INT8 tensor cores | ~21 s | ~12.5 s |
-| INT8 + ⚡ Fast mode | ~20 s | ~10.5 s |
+| INT8 + Faster speed | ~20 s | ~10.5 s |
 | Expand, per pass (INT8) | ~19 s | |
 | Photo description | ~18–19 s | |
 
@@ -125,7 +125,7 @@ Engineering notes. Every figure below was measured in the app on an RTX 3060 Ti 
 
 \*On an RTX 3060 Ti with the rest of its VRAM held by another program to leave what a 6 GB / 4 GB card has free. Slower cards take proportionally longer.
 
-- **GeForce GTX cards** (GTX 16 series and older) have no tensor cores and are compute-bound: a 1024×1024 image took over 500 s on a GTX 1650. They start on the "Fast" size (736×736) with the Lightning 4-step LoRA, about 4× less work, and the INT8 model is hidden there.
+- **GeForce GTX cards** (GTX 16 series and older) have no tensor cores and are compute-bound: a 1024×1024 image took over 500 s on a GTX 1650. They start on the Small size (736×736) with the Fastest speed (Lightning 4-step LoRA), about 4× less work, and the INT8 model is hidden there.
 - **4 GB cards** download a smaller text encoder (Qwen3-VL-8B Q3_K_S, 3.77 GB instead of 5.15 GB). In a PC with under 13 GB of RAM they also get the Q3_K_S image model (2.72 GB instead of 4.2 GB): it is 24% slower per step but needs 1.5 GB less RAM, so the engine isn't paged out.
 - Expand, variation and inpaint always run the normal 8 steps: Lightning 4 steps left borders blank or drew the subject twice when expanding.
 - **Low free RAM:** when too little RAM is free at engine start to keep all weights in memory, the text encoder is read from disk instead (a few seconds more per new prompt) rather than letting Windows page the engine out.
@@ -185,7 +185,7 @@ The app can run on AMD Radeon cards with stable-diffusion.cpp's **official** AMD
 The device name the engine uses (`ROCm0`, `Vulkan0`) is read from `sd-server --list-devices`, and the same placement as on
 NVIDIA is used: weights mirrored in RAM, a 6 GB VRAM budget (less on cards under 8 GB). The
 **INT8 ConvRot model** is available with CUDA on NVIDIA tensor-core GPUs and with ROCm on CDNA/RDNA3/RDNA3.5/RDNA4 devices. Older AMD devices and Vulkan keep Q4_K_M selected; Vulkan INT8 needs device-feature detection before the app can offer it safely.
-⚡ Fast mode and every generation mode stay available. The photo describer was already a Vulkan build and runs on AMD
+The Faster speed and every generation mode stay available. The photo describer was already a Vulkan build and runs on AMD
 drivers too.
 
 **Integrated Radeon (APU).** An APU whose BIOS gives the GPU only a small carve-out (2 GB or less, often 512 MB) works
@@ -204,7 +204,7 @@ RTX 3060 Ti only.
 | GPU detection, backend choice, device-name parsing, the Linux ROCm zip's `build/bin/` layout, the Windows ROCm library lookup (ROCm 6 and 7 folders told apart), VRAM budget: unit tests | Windows |
 | The NVIDIA path is unchanged: still `CUDA0`, still the CUDA runtime download, 1024×1024 in 18.3 s / 19.5 s, all tests pass | Windows, RTX 3060 Ti |
 | Archive contents and dependencies of the four AMD zips (HIP runtime DLLs bundled on Windows, `hipblas.dll` imported but not bundled; Linux ROCm links system ROCm 7; Linux Vulkan glibc floor 2.43) | read from the published archives |
-| **The Vulkan engine path end to end in the app**: device read as `Vulkan0`, Q4_K_M generation at 1024×1024 in 21.5 s (new prompt) / 19.1 s (repeat), ⚡ Fast mode 15.1–15.8 s; the first launch's warm-up took 83 s (shader compilation), later ones 22 s | Windows, upstream Vulkan zip on the **RTX 3060 Ti** (NVIDIA's Vulkan driver, not AMD's) |
+| **The Vulkan engine path end to end in the app**: device read as `Vulkan0`, Q4_K_M generation at 1024×1024 in 21.5 s (new prompt) / 19.1 s (repeat), the Faster speed 15.1–15.8 s; the first launch's warm-up took 83 s (shader compilation), later ones 22 s | Windows, upstream Vulkan zip on the **RTX 3060 Ti** (NVIDIA's Vulkan driver, not AMD's) |
 | First-run setup with the Vulkan engine from a local mirror: no CUDA runtime in the list, the zip unpacked into `runtime\vulkan\`, the GPU line and a failed download shown on the setup screen | Windows |
 | APU placement (weights on `Vulkan0`, text encoder from disk, `--max-vram 0`) accepted by the engine and generating correctly, with 8 GB of shared memory simulated | Windows, Vulkan zip on the RTX 3060 Ti |
 
