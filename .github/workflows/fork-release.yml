@@ -46,10 +46,13 @@ jobs:
           $exe = "target/release/rust-image-studio.exe"
           if (-not (Test-Path $exe)) { throw "no $exe" }
           $bytes = [IO.File]::ReadAllBytes($exe)
-          # tray-icon registers a hidden win32 window whose class name is a UTF-16 literal, so the
-          # name is only matchable in the wide decoding of the image.
+          # tray-icon registers a hidden win32 window whose class name is a string literal, so the
+          # name survives in the image (ASCII, or UTF-16 if the compiler stored it wide).
+          $ascii = [Text.Encoding]::ASCII.GetString($bytes)
           $wide = [Text.Encoding]::Unicode.GetString($bytes)
-          if ($wide -notmatch "tray_icon_app") { throw "tray icon code is not linked into this build" }
+          if (($ascii -notmatch "tray_icon_app") -and ($wide -notmatch "tray_icon_app")) {
+            throw "tray icon code is not linked into this build"
+          }
           "tray code linked into a $($bytes.Length) byte exe"
 
       - name: Package
